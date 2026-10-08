@@ -66,6 +66,7 @@ struct DetailPage: View {
     @State private var range: DetailRange = .live
     @State private var stored: [HistoryPoint] = []
     @State private var selection: Date?
+    @State private var forceQuit: String?
 
     private var spec: MetricSpec { MetricSpec.of(name) }
     private var tone: Color { Theme.tone(name) }
@@ -320,6 +321,8 @@ struct DetailPage: View {
                                     .font(Theme.mono(12)).foregroundStyle(Theme.soft).frame(width: 72, alignment: .trailing)
                             }
                             .padding(.vertical, 6)
+                            .contentShape(Rectangle())
+                            .contextMenu { QuitMenu(monitor: monitor, app: app.0, forceQuit: $forceQuit) }
                             .animation(.easeOut(duration: 0.3), value: app.1)
                         }
                     }
@@ -331,6 +334,7 @@ struct DetailPage: View {
         }
         .fixedSize(horizontal: false, vertical: true)
         .overlay(alignment: .bottom) { Hairline() }
+        .forceQuitConfirmation(monitor: monitor, app: $forceQuit)
     }
 
     private var topApps: [(String, Double)]? {
@@ -416,7 +420,7 @@ struct ProjectsPage: View {
             .padding(.top, 22)
             Text("Local servers listening on TCP ports").font(.system(size: 13)).foregroundStyle(Theme.muted).padding(.top, 4)
             Hairline().padding(.top, 26)
-            ProjectsView(servers: monitor.servers).padding(.top, 18)
+            ProjectsView(monitor: monitor).padding(.top, 18)
         }
     }
 }

@@ -44,8 +44,8 @@ Gauge is built like a measuring instrument rather than a dashboard: six vitals s
 - **Hover for exact values.** A crosshair follows the pointer and reads out the time and every series at that moment.
 - **Worth a look.** Plain-language notices when something needs attention, such as elevated memory pressure, an app pinning a core, a nearly full disk, or dev servers left running.
 - **Right now.** Ring breakdowns of memory by type, memory by app, CPU by app and the startup disk.
-- **Apps, not processes.** Helper processes are grouped under their app, so "Google Chrome" is one row, not forty.
-- **Dev-server aware.** Spots Node, Python, Ruby, Bun, Deno and other local servers listening on TCP ports, with the folder each one runs in. Game servers, such as Minecraft on Java, are listed but not counted as dev servers.
+- **Apps, not processes.** Helper processes are grouped under their app, so "Google Chrome" is one row, not forty. Quit or force quit an app from the process table, or from the top apps on the CPU and Memory pages (Control-click).
+- **Dev-server aware.** Spots Node, Python, Ruby, Bun, Deno and other local servers listening on TCP ports, with the folder each one runs in. Stop a forgotten server from the Projects page; Gauge sends the same signal as Control-C and offers Force stop if it doesn't exit. Game servers, such as Minecraft on Java, are listed but not counted as dev servers.
 - **Shows its own cost.** The status bar shows Gauge's own CPU and memory, so you can see what monitoring costs.
 - **One signal colour.** Orange is reserved for readings that need attention, so a warning never hides among the metric colours.
 - **Feels native.** Floating navigation island, ⌘1–⌘8 shortcuts, Esc to go back, sortable process table, Settings window, and CSV export.
