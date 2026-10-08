@@ -2,33 +2,43 @@ import SwiftUI
 
 /// A 0–100 tick scale with a filled bar up to the reading. The ticks are drawn once; the fill is a
 /// plain shape so width changes animate on the GPU instead of redrawing a canvas every frame.
+/// Only the fill glides to a new reading, so the tick canvas isn't part of the animation.
 struct Ruler: View {
     var fraction: Double
     var hot = false
     var tint: Color = Theme.ink
+    var glide: Animation? = .smooth(duration: 0.45)
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            Canvas { ctx, size in
-                let w = size.width
-                ctx.fill(Path(CGRect(x: 0, y: 2, width: w, height: 3)), with: .color(Theme.line2))
-                for i in 0...20 {
-                    let x = (w - 1) * Double(i) / 20 + 0.5
-                    let bottom: Double = i % 10 == 0 ? 14 : i % 5 == 0 ? 12.5 : 11
-                    var tick = Path()
-                    tick.move(to: CGPoint(x: x, y: 8))
-                    tick.addLine(to: CGPoint(x: x, y: bottom))
-                    ctx.stroke(tick, with: .color(Theme.faint), lineWidth: 1)
-                }
-            }
+            RulerTicks()
             Rectangle()
                 .fill(hot ? Theme.signal : tint)
                 .frame(height: 3)
                 .scaleEffect(x: min(1, max(0, fraction)), anchor: .leading)
+                .animation(glide, value: fraction)
                 .padding(.top, 2)
         }
         .frame(height: 14)
         .accessibilityHidden(true)
+    }
+}
+
+/// The ruler's track and ticks. A separate view with no inputs, so a new reading doesn't redraw it.
+private struct RulerTicks: View {
+    var body: some View {
+        Canvas { ctx, size in
+            let w = size.width
+            ctx.fill(Path(CGRect(x: 0, y: 2, width: w, height: 3)), with: .color(Theme.line2))
+            for i in 0...20 {
+                let x = (w - 1) * Double(i) / 20 + 0.5
+                let bottom: Double = i % 10 == 0 ? 14 : i % 5 == 0 ? 12.5 : 11
+                var tick = Path()
+                tick.move(to: CGPoint(x: x, y: 8))
+                tick.addLine(to: CGPoint(x: x, y: bottom))
+                ctx.stroke(tick, with: .color(Theme.faint), lineWidth: 1)
+            }
+        }
     }
 }
 

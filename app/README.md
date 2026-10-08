@@ -11,6 +11,17 @@ Requires the Xcode command line tools (Swift 6.2+).
 ./build.sh --open   # builds and launches it
 ```
 
+## Test
+
+```bash
+./test.sh                    # all tests
+./test.sh --filter Notices   # one suite
+```
+
+The tests use Swift Testing. With only the Command Line Tools installed, `test.sh` adds the framework
+paths that `swift test` doesn't find on its own. History store tests use a temporary SQLite file, never
+your real history.
+
 ## Releasing
 
 ```bash

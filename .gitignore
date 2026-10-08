@@ -9,3 +9,15 @@
 *.xcuserstate
 xcuserdata/
 /app/dist/
+
+# Website (Next.js) build output and dependencies
+/website/node_modules/
+/website/.next/
+/website/.vercel/
+/website/out/
+*.tsbuildinfo
+.env*.local
+
+# Rendered trailer media (large; publish as a release or website asset instead)
+/trailer/*.mp4
+/trailer/*.wav

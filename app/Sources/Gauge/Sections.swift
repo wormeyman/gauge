@@ -61,6 +61,9 @@ struct Channel: View {
                             .tracking(-1.5)
                             .monospacedDigit()
                             .contentTransition(.opacity)
+                            // Scoped to the readout: animating the whole channel redrew its trace and
+                            // readings for every frame of every tick, roughly doubling Gauge's CPU use.
+                            .animation(.easeOut(duration: 0.25), value: vital.value)
                         Text(vital.unit).font(.system(size: 12)).foregroundStyle(Theme.muted)
                     }
                     .lineLimit(1)
@@ -71,7 +74,6 @@ struct Channel: View {
                 .padding(.top, 8)
                 .padding(.bottom, 14)
                 Ruler(fraction: vital.fraction, hot: vital.flag != nil, tint: Theme.tone(vital.name))
-                    .animation(.smooth(duration: 0.45), value: vital.fraction)
                 HStack {
                     Text(vital.scale.0)
                     Spacer()
@@ -88,7 +90,6 @@ struct Channel: View {
             .padding(.leading, leading ? 0 : 20)
             .padding(.trailing, trailing ? 0 : 20)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .animation(.easeOut(duration: 0.25), value: vital.value)
             .background(alignment: .bottom) {
                 // Hover marks the channel as clickable with a thin line in its colour.
                 Rectangle().fill(Theme.tone(vital.name))

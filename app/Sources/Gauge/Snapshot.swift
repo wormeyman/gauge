@@ -2,6 +2,7 @@ import SwiftUI
 
 /// Development aid: with GAUGE_SNAPSHOT=<folder>, Gauge renders its overview (and optionally a
 /// detail sheet) to PNGs from live data, then quits. Used for progress screenshots.
+/// Also renders the menu bar panel to menubar.png.
 /// Optional: GAUGE_SNAPSHOT_WIDTH=1440, GAUGE_SNAPSHOT_HEIGHT=900, GAUGE_SNAPSHOT_SHEET=CPU (a detail page), GAUGE_SNAPSHOT_DELAY=8.
 @MainActor
 enum Snapshot {
@@ -27,6 +28,7 @@ enum Snapshot {
                 StatusBar(monitor: monitor, showPrivacy: {})
             }
             save(page.frame(width: width), to: "\(folder)/overview.png")
+            save(MenuBarPanel(monitor: monitor), to: "\(folder)/menubar.png")
             if let height = Double(env["GAUGE_SNAPSHOT_HEIGHT"] ?? "") {
                 // Window-sized view: content clipped to the viewport, island floating above the status bar.
                 let viewport = ZStack(alignment: .bottom) {

@@ -91,7 +91,7 @@ struct ProjectsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if servers.isEmpty {
-                Text("No local dev servers are listening right now. Gauge looks for Node, Python, Ruby, Bun, Deno and similar processes with open TCP ports.")
+                Text("No local servers are listening right now. Gauge looks for Node, Python, Ruby, Bun, Deno and similar processes with open TCP ports.")
                     .font(.system(size: 13.5)).foregroundStyle(Theme.soft).fixedSize(horizontal: false, vertical: true)
             } else {
                 Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 10) {
@@ -107,13 +107,14 @@ struct ProjectsView: View {
                             Text(server.folder.isEmpty ? "–" : server.folder).foregroundStyle(Theme.soft).lineLimit(1)
                             Text(server.ports.map(String.init).joined(separator: ", ")).font(Theme.mono(12.5))
                             Text(Fmt.memoryText(server.memory)).font(Theme.mono(12.5))
-                            Text(server.idle ? "Idle" : "Active").foregroundStyle(server.idle ? Theme.muted : Theme.ink)
+                            Text(server.isDev ? (server.idle ? "Idle" : "Active") : "Game server")
+                                .foregroundStyle(server.isDev && !server.idle ? Theme.ink : Theme.muted)
                         }
                         .font(.system(size: 13))
                     }
                 }
             }
-            Text("Gauge only lists these servers. It doesn't stop or change them.")
+            Text("Gauge only lists these servers. It doesn't stop or change them. Game servers, such as Minecraft, are listed but not counted as dev servers.")
                 .font(.system(size: 12.5)).foregroundStyle(Theme.muted)
         }
     }

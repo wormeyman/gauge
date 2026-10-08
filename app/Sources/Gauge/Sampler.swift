@@ -56,7 +56,15 @@ struct DevServer: Identifiable, Hashable {
     var ports: [Int]
     var cpu: Double
     var memory: Double
+    /// False for servers that run on a dev runtime but aren't dev servers, such as a Minecraft server on Java.
+    var isDev = true
     var idle: Bool { cpu < 1 }
+}
+
+/// Gauge's own CPU and memory, so its cost is visible.
+struct SelfUsage: Hashable {
+    var cpu: Double = 0
+    var memory: Double = 0
 }
 
 struct Reading {
@@ -71,6 +79,7 @@ struct Reading {
     var battery: BatteryReading?
     var apps: [AppUsage] = []
     var processCount = 0
+    var selfUsage = SelfUsage()
     /// CPU seconds each app used since the previous reading, for the history store.
     var cpuSecondsDelta: [String: Double] = [:]
     /// Nil when the listening-port scan did not run this tick.
@@ -92,6 +101,9 @@ final class Sampler: @unchecked Sendable {
     private var lastVolumeCheck = Date.distantPast
     private var volume: (name: String, total: Double, available: Double) = ("Macintosh HD", 0, 0)
     private var lastServerScan = Date.distantPast
+    private let ownPID = getpid()
+    /// Bytes per page for host_statistics64 counts (vm_kernel_page_size isn't concurrency-safe to read).
+    private let pageSize = Double(Sampler.sysctlInt64("vm.pagesize") ?? 16_384)
     private let timebase: mach_timebase_info_data_t = {
         var info = mach_timebase_info_data_t()
         mach_timebase_info(&info)
@@ -115,6 +127,7 @@ final class Sampler: @unchecked Sendable {
         r.apps = processes.apps
         r.processCount = processes.count
         r.cpuSecondsDelta = processes.cpuDelta
+        if let own = processes.byPID[ownPID] { r.selfUsage = SelfUsage(cpu: own.cpu, memory: own.memory) }
         if !priming, r.date.timeIntervalSince(lastServerScan) >= 15 {
             lastServerScan = r.date
             r.servers = scanDevServers(processes: processes.byPID)
@@ -166,7 +179,7 @@ final class Sampler: @unchecked Sendable {
             }
         }
         if result == KERN_SUCCESS {
-            let page = Double(vm_kernel_page_size)
+            let page = pageSize
             m.app = Double(stats.internal_page_count &- stats.purgeable_count) * page
             m.wired = Double(stats.wire_count) * page
             m.compressed = Double(stats.compressor_page_count) * page
@@ -275,7 +288,7 @@ final class Sampler: @unchecked Sendable {
                     let info = raw.loadUnaligned(fromByteOffset: offset, as: if_msghdr2.self)
                     var name = [CChar](repeating: 0, count: Int(IF_NAMESIZE))
                     if if_indextoname(UInt32(info.ifm_index), &name) != nil {
-                        let interface = String(cString: name)
+                        let interface = String(cBuffer: name)
                         if interface.hasPrefix("en") || interface.hasPrefix("pdp_ip") {
                             down += info.ifm_data.ifi_ibytes
                             up += info.ifm_data.ifi_obytes
@@ -346,6 +359,8 @@ final class Sampler: @unchecked Sendable {
         var delta: [String: Double] = [:]
         var byPID: [Int32: ProcessSample] = [:]
         var ticks: [Int32: UInt64] = [:]
+        var pathBuffer = [CChar](repeating: 0, count: 4096)
+        var nameBuffer = [CChar](repeating: 0, count: 256)
 
         for pid in pids.prefix(found) where pid > 0 {
             var task = proc_taskinfo()
@@ -358,12 +373,12 @@ final class Sampler: @unchecked Sendable {
                 $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(pid, RUSAGE_INFO_V4, $0) }
             } == 0 ? Double(usage.ri_phys_footprint) : Double(task.pti_resident_size)
 
-            var pathBuffer = [CChar](repeating: 0, count: 4096)
+            pathBuffer[0] = 0
+            nameBuffer[0] = 0
             proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count))
-            var nameBuffer = [CChar](repeating: 0, count: 256)
             proc_name(pid, &nameBuffer, UInt32(nameBuffer.count))
-            let command = String(cString: nameBuffer)
-            let app = Sampler.appName(path: String(cString: pathBuffer), command: command)
+            let command = String(cBuffer: nameBuffer)
+            let app = Sampler.appName(path: String(cBuffer: pathBuffer), command: command)
 
             var seconds = 0.0
             if let before = previousProcesses[pid], total >= before { seconds = toSeconds(total - before) }
@@ -409,7 +424,7 @@ final class Sampler: @unchecked Sendable {
 
     // MARK: Dev servers
 
-    private static let devCommands = ["node", "bun", "deno", "python", "ruby", "java", "php", "uvicorn", "gunicorn",
+    static let devCommands = ["node", "bun", "deno", "python", "ruby", "java", "php", "uvicorn", "gunicorn",
                                       "puma", "rails", "next-server", "vite", "esbuild", "hugo", "jekyll", "dotnet", "beam.smp"]
 
     /// Local servers the user started, found via lsof's listening TCP sockets.
@@ -424,27 +439,67 @@ final class Sampler: @unchecked Sendable {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
 
-        var servers: [Int32: DevServer] = [:]
+        let listeners = Sampler.parseListeners(String(decoding: data, as: UTF8.self))
+        return Sampler.servers(from: listeners).map { server in
+            var server = server
+            server.folder = Sampler.workingFolder(server.pid)
+            server.cpu = processes[server.pid]?.cpu ?? 0
+            server.memory = processes[server.pid]?.memory ?? 0
+            return server
+        }
+    }
+
+    struct Listener: Equatable {
+        var pid: Int32
+        var command: String
+        var port: Int
+    }
+
+    /// Parses `lsof -F pcn` output: "p<pid>", "c<command>" and "n<address:port>" lines, one field per line.
+    static func parseListeners(_ output: String) -> [Listener] {
+        var result: [Listener] = []
         var pid: Int32 = 0, command = ""
-        for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
+        for line in output.split(separator: "\n") {
             guard let tag = line.first else { continue }
             let value = String(line.dropFirst())
             switch tag {
-            case "p": pid = Int32(value) ?? 0
+            case "p": pid = Int32(value) ?? 0; command = ""
             case "c": command = value
             case "n":
-                let lower = command.lowercased()
-                guard Sampler.devCommands.contains(where: { lower.hasPrefix($0) }),
-                      let port = value.split(separator: ":").last.flatMap({ Int($0) }) else { continue }
-                var server = servers[pid] ?? DevServer(pid: pid, name: Sampler.appName(path: "", command: command),
-                                                       folder: Sampler.workingFolder(pid), ports: [],
-                                                       cpu: processes[pid]?.cpu ?? 0, memory: processes[pid]?.memory ?? 0)
-                if !server.ports.contains(port) { server.ports.append(port) }
-                servers[pid] = server
+                guard pid > 0, let port = value.split(separator: ":").last.flatMap({ Int($0) }) else { continue }
+                result.append(Listener(pid: pid, command: command, port: port))
             default: break
             }
         }
-        return servers.values.sorted { ($0.ports.first ?? 0) < ($1.ports.first ?? 0) }
+        return result
+    }
+
+    /// Groups listeners by process and keeps the ones on a dev runtime, sorted by first port.
+    /// Folder, CPU and memory are filled in by the caller.
+    static func servers(from listeners: [Listener]) -> [DevServer] {
+        var servers: [Int32: DevServer] = [:]
+        for listener in listeners {
+            let lower = listener.command.lowercased()
+            guard devCommands.contains(where: { lower.hasPrefix($0) }) else { continue }
+            var server = servers[listener.pid] ?? DevServer(pid: listener.pid, name: appName(path: "", command: listener.command),
+                                                            folder: "", ports: [], cpu: 0, memory: 0)
+            if !server.ports.contains(listener.port) { server.ports.append(listener.port) }
+            servers[listener.pid] = server
+        }
+        return servers.values.map(classify).sorted { ($0.ports.first ?? 0) < ($1.ports.first ?? 0) }
+    }
+
+    /// Java game servers listen on Minecraft's port range; they're local servers, not dev servers.
+    static let minecraftPorts = 25565...25575
+
+    static func classify(_ server: DevServer) -> DevServer {
+        var server = server
+        server.ports.sort()
+        if server.name == "Java", server.ports.contains(where: minecraftPorts.contains) {
+            server.name = "Minecraft"
+            server.isDev = false
+        }
+        return server
     }
 
     private static func workingFolder(_ pid: Int32) -> String {
@@ -516,6 +571,13 @@ final class Sampler: @unchecked Sendable {
         guard sysctlbyname(name, nil, &size, nil, 0) == 0, size > 0 else { return nil }
         var buffer = [CChar](repeating: 0, count: size)
         guard sysctlbyname(name, &buffer, &size, nil, 0) == 0 else { return nil }
-        return String(cString: buffer)
+        return String(cBuffer: buffer)
+    }
+}
+
+extension String {
+    /// A string from a NUL-terminated C buffer.
+    init(cBuffer buffer: [CChar]) {
+        self.init(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
     }
 }

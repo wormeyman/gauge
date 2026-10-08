@@ -26,10 +26,11 @@ final class HistoryStore: @unchecked Sendable {
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "gauge.history")
 
-    init() {
+    /// Opens (or creates) the history file. Tests pass a temporary file.
+    init(file: URL = HistoryStore.file) {
         queue.sync {
-            try? FileManager.default.createDirectory(at: Self.folder, withIntermediateDirectories: true)
-            guard sqlite3_open_v2(Self.file.path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nil) == SQLITE_OK else {
+            try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            guard sqlite3_open_v2(file.path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nil) == SQLITE_OK else {
                 db = nil
                 return
             }
