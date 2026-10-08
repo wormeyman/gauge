@@ -107,9 +107,6 @@ Gauge uses [Sparkle](https://sparkle-project.org) to update itself.
 
 - On the second launch, Gauge **asks** whether to check for updates automatically. You can change this, or check by hand, in Settings and in **Gauge › Check for Updates…**.
 - A check downloads one small feed, [`gauge.alex.codes/appcast.xml`](https://gauge.alex.codes/appcast.xml). Gauge sends **no system profile** and nothing about your Mac.
-
-> [!NOTE]
-> The update feed goes live with the Gauge website. Until then, Check for Updates can't reach it, and new versions are on the [Releases page](https://github.com/byalex33/gauge/releases).
 - Updates are disk images on [GitHub Releases](https://github.com/byalex33/gauge/releases). Each one is signed with an EdDSA key, and Gauge refuses any update whose signature doesn't match the key built into the app.
 
 ## Design
