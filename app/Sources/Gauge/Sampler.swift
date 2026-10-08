@@ -58,8 +58,6 @@ struct DevServer: Identifiable, Hashable {
     var memory: Double
     /// False for servers that run on a dev runtime but aren't dev servers, such as a Minecraft server on Java.
     var isDev = true
-    /// Process start time, so stopping a server never signals a reused PID.
-    var started: UInt64 = 0
     var idle: Bool { cpu < 1 }
 }
 
@@ -426,9 +424,6 @@ final class Sampler: @unchecked Sendable {
 
     // MARK: Dev servers
 
-    /// Makes the next reading rescan listening ports, such as after a server was stopped.
-    func rescanServersSoon() { lastServerScan = .distantPast }
-
     static let devCommands = ["node", "bun", "deno", "python", "ruby", "java", "php", "uvicorn", "gunicorn",
                                       "puma", "rails", "next-server", "vite", "esbuild", "hugo", "jekyll", "dotnet", "beam.smp"]
 
@@ -448,7 +443,6 @@ final class Sampler: @unchecked Sendable {
         return Sampler.servers(from: listeners).map { server in
             var server = server
             server.folder = Sampler.workingFolder(server.pid)
-            server.started = ProcessControl.startTime(server.pid) ?? 0
             server.cpu = processes[server.pid]?.cpu ?? 0
             server.memory = processes[server.pid]?.memory ?? 0
             return server
