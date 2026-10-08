@@ -38,13 +38,15 @@ Native SwiftUI. Live readings. History stays on your Mac.
 
 Gauge is built like a measuring instrument rather than a dashboard: six vitals sit side by side like channels on a mixing desk, each with its own colour, a monospaced readout, a tick-mark scale and a fine trace.
 
-- **Six live vitals, every 2 seconds.** CPU, memory and memory pressure, GPU, disk space and throughput, network, and battery.
+- **Six live vitals, every 2 seconds.** CPU, memory and memory pressure, GPU, disk space and throughput, network, and battery. Every scale fills with what's in use, so a fuller bar always means the same thing.
+- **In the menu bar.** CPU sits in the menu bar, and a click shows all six vitals and the top notice. With it on, closing the window keeps Gauge running; turn it off in Settings.
 - **A page for every metric.** Click a channel for a large chart with ranges from Live to 7 days, plus average, low and peak, full readings and the top apps.
 - **Hover for exact values.** A crosshair follows the pointer and reads out the time and every series at that moment.
 - **Worth a look.** Plain-language notices when something needs attention, such as elevated memory pressure, an app pinning a core, a nearly full disk, or dev servers left running.
 - **Right now.** Ring breakdowns of memory by type, memory by app, CPU by app and the startup disk.
 - **Apps, not processes.** Helper processes are grouped under their app, so "Google Chrome" is one row, not forty.
-- **Dev-server aware.** Spots Node, Python, Ruby, Bun, Deno and other local servers listening on TCP ports, with the folder each one runs in.
+- **Dev-server aware.** Spots Node, Python, Ruby, Bun, Deno and other local servers listening on TCP ports, with the folder each one runs in. Game servers, such as Minecraft on Java, are listed but not counted as dev servers.
+- **Shows its own cost.** The status bar shows Gauge's own CPU and memory, so you can see what monitoring costs.
 - **One signal colour.** Orange is reserved for readings that need attention, so a warning never hides among the metric colours.
 - **Feels native.** Floating navigation island, ⌘1–⌘8 shortcuts, Esc to go back, sortable process table, Settings window, and CSV export.
 - **Keeps itself up to date.** Signed updates through Sparkle, only if you allow it.
@@ -130,6 +132,12 @@ cd gauge/app
 
 `build.sh` compiles a release build with Swift Package Manager, embeds Sparkle, assembles `app/build/Gauge.app` with its icon, and signs it ad hoc for local use. Releases are made with `app/release.sh`; see [`app/README.md`](app/README.md).
 
+Run the tests (Swift Testing, no Xcode needed) with:
+
+```bash
+./test.sh
+```
+
 ## Keyboard shortcuts
 
 | Shortcut | Action |
@@ -148,13 +156,17 @@ gauge/
 ├── app/                      Native macOS app (Swift Package)
 │   ├── Sources/Gauge/
 │   │   ├── Sampler.swift     Reads system counters (Mach, sysctl, IOKit, libproc, CoreAudio)
-│   │   ├── Monitor.swift     Turns readings into vitals, notices and breakdowns
+│   │   ├── Monitor.swift     Turns readings into vitals and breakdowns
+│   │   ├── Notices.swift     Rules for "Worth a look" and the status line
+│   │   ├── MenuBar.swift     Menu bar extra and its panel
 │   │   ├── HistoryStore.swift  Local SQLite history
 │   │   ├── Detail.swift      Metric pages with interactive Swift Charts
 │   │   ├── Sections.swift    Overview sections
 │   │   └── …
+│   ├── Tests/GaugeTests/     Formatting, sampler parsing, notices and history store
 │   ├── Resources/            Info.plist, AppIcon.svg / .icns
-│   └── build.sh
+│   ├── build.sh
+│   └── test.sh
 ├── prototype/index.html      Interactive HTML design prototype (sample data)
 └── docs/                     README images
 ```
@@ -170,7 +182,8 @@ The HTML prototype is the design reference. Open [`prototype/index.html`](protot
 - [x] Installable disk image with signed, opt-in updates
 - [ ] Notarized, Developer ID–signed builds
 - [ ] Temperature and fan sensors via a privileged helper
-- [ ] Menu bar extra
+- [x] Menu bar extra
+- [x] Tests for formatting, parsing, notices and history
 - [ ] Desktop widgets
 
 ## License

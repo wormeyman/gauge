@@ -14,8 +14,8 @@ final class Updates: ObservableObject {
         let isApp = Bundle.main.bundleURL.pathExtension == "app"
         let start = isApp && Snapshot.folder == nil
         controller = start ? SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil) : nil
-        observation = controller?.updater.observe(\.canCheckForUpdates, options: [.initial, .new]) { [weak self] updater, _ in
-            let value = updater.canCheckForUpdates
+        observation = controller?.updater.observe(\.canCheckForUpdates, options: [.initial, .new]) { [weak self] _, change in
+            let value = change.newValue ?? false
             Task { @MainActor in self?.canCheck = value }
         }
     }

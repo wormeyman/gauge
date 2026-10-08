@@ -66,6 +66,8 @@ struct StatusBar: View {
             Hairline()
             HStack(spacing: 12) {
                 Text("\(monitor.appCount) apps · \(monitor.processCount) processes")
+                Text("Gauge \(String(format: "%.1f%%", monitor.selfUsage.cpu)) CPU · \(Fmt.memoryText(monitor.selfUsage.memory))")
+                    .help("Gauge's own CPU, averaged over 30 seconds, and memory footprint")
                 Button("Privacy", action: showPrivacy).buttonStyle(.plain).foregroundStyle(Theme.muted)
                 Spacer()
                 HStack(spacing: 7) {

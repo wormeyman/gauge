@@ -357,7 +357,10 @@ struct DetailPage: View {
         case "Disk":
             let d = r.disk
             return [Stat(label: "Volume", value: d.name), Stat(label: "Capacity", value: Fmt.storageText(d.total)),
-                    Stat(label: "Available", value: Fmt.storageText(d.available))] + vital.stats
+                    Stat(label: "Used", value: Fmt.storageText(max(0, d.total - d.available))),
+                    Stat(label: "Available", value: Fmt.storageText(d.available)),
+                    Stat(label: "Reading", value: Fmt.rateText(d.readRate)), Stat(label: "Writing", value: Fmt.rateText(d.writeRate)),
+                    Stat(label: "Written since launch", value: Fmt.storageText(d.writtenSinceLaunch))]
         case "Network":
             return [Stat(label: "Downloading", value: Fmt.rateText(r.network.downRate))] + vital.stats
         case "Battery":
@@ -411,7 +414,7 @@ struct ProjectsPage: View {
                 Text("Projects").font(.system(size: 30, weight: .semibold)).tracking(-0.75)
             }
             .padding(.top, 22)
-            Text("Local dev servers listening on TCP ports").font(.system(size: 13)).foregroundStyle(Theme.muted).padding(.top, 4)
+            Text("Local servers listening on TCP ports").font(.system(size: 13)).foregroundStyle(Theme.muted).padding(.top, 4)
             Hairline().padding(.top, 26)
             ProjectsView(servers: monitor.servers).padding(.top, 18)
         }

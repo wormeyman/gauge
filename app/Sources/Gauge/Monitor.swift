@@ -123,6 +123,12 @@ final class Monitor {
     var appCount = 0
     var machine = ""
     var recent: [RecentSample] = []
+    /// Updated every tick, even while no window is visible, for the menu bar label.
+    var cpuNow: Double?
+    /// A page the menu bar panel asked the main window to show; the window clears it.
+    var requestedPage: String?
+    /// Gauge's own cost, averaged over the last 30 seconds.
+    var selfUsage = SelfUsage()
 
     var historyMetric: HistoryMetric = .cpu
     var period: HistoryPeriod = .twelveHours { didSet { reloadHistory() } }
@@ -143,12 +149,20 @@ final class Monitor {
     private var busyApps: [String: Date] = [:]
     private var cpuHighSince: Date?
     private var gpuPeak = 0.0
+    private var selfSamples: [SelfUsage] = []
 
     var visibleNotices: [Notice] { notices.filter { !dismissed.contains($0.id) } }
 
     /// False while no Gauge window is visible: sampling and history continue, view updates pause.
     private var windowVisible = true
+    /// True while the menu bar panel is open.
+    private var panelVisible = false
     private var occlusionObserver: NSObjectProtocol?
+
+    func setPanelVisible(_ visible: Bool) {
+        panelVisible = visible
+        if visible, let latest { publish(latest) }
+    }
 
     func start() {
         guard timer == nil else { return }
@@ -196,7 +210,10 @@ final class Monitor {
         if let servers = r.servers { serverList = servers }
 
         let cpu = (r.cpuUser ?? 0) + (r.cpuSystem ?? 0)
+        cpuNow = cpu
         gpuPeak = max(gpuPeak, r.gpuUtilization ?? 0)
+        selfSamples.append(r.selfUsage)
+        if selfSamples.count > 15 { selfSamples.removeFirst(selfSamples.count - 15) }
         updateFlags(r, cpu: cpu)
         persist(r)
         if ticks % 1800 == 0 { store.prune(keepingDays: Self.retentionDays) }
@@ -204,7 +221,7 @@ final class Monitor {
                                    gpu: r.gpuUtilization ?? 0, diskRead: r.disk.readRate, diskWrite: r.disk.writeRate,
                                    down: r.network.downRate, up: r.network.upRate, battery: r.battery?.percent))
         if recent.count > 300 { recent.removeFirst(recent.count - 300) }
-        if windowVisible || !ready || Snapshot.folder != nil { publish(r) }
+        if windowVisible || panelVisible || !ready || Snapshot.folder != nil { publish(r) }
     }
 
     /// Rebuilds everything the views show from a reading.
@@ -214,11 +231,14 @@ final class Monitor {
         processCount = r.processCount
         apps = r.apps.sorted { $0.cpu > $1.cpu }
         servers = serverList
+        let n = Double(max(selfSamples.count, 1))
+        selfUsage = SelfUsage(cpu: selfSamples.map(\.cpu).reduce(0, +) / n, memory: r.selfUsage.memory)
         vitals = buildVitals(r, cpu: cpu)
-        notices = buildNotices(r)
+        notices = Notices.build(reading: r, now: Date(), memoryWarningSince: memoryWarningSince, busyApps: busyApps,
+                                servers: serverList, previous: notices)
         breakdowns = buildBreakdowns(r, cpu: cpu)
         hardware = buildHardware(r)
-        status = buildStatus()
+        status = Notices.status(vitals: vitals)
         ready = true
         if ticks % 15 == 1 { reloadHistory() }
     }
@@ -267,10 +287,7 @@ final class Monitor {
         return p >= 4 ? "Critical" : p >= 2 ? "Elevated" : nil
     }
 
-    private var diskLow: Bool {
-        guard let d = latest?.disk, d.total > 0 else { return false }
-        return d.available / d.total < 0.1
-    }
+    private var diskLow: Bool { latest.map { Notices.diskLow($0.disk) } ?? false }
 
     private func updateFlags(_ r: Reading, cpu: Double) {
         memoryWarningSince = r.memory.pressure >= 2 ? (memoryWarningSince ?? r.date) : nil
@@ -280,10 +297,7 @@ final class Monitor {
         busyApps = busy
     }
 
-    private func sustained(_ since: Date?, _ seconds: TimeInterval = 30) -> Bool {
-        guard let since else { return false }
-        return Date().timeIntervalSince(since) >= seconds
-    }
+    private func sustained(_ since: Date?) -> Bool { Notices.sustained(since, now: Date()) }
 
     // MARK: Vitals
 
@@ -299,7 +313,8 @@ final class Monitor {
         let (memValue, memUnit) = Fmt.memory(mem.used)
         let gpu = r.gpuUtilization
         let gpuAverage = recent.map(\.gpu).reduce(0, +) / Double(max(recent.count, 1))
-        let (freeValue, freeUnit) = Fmt.storage(r.disk.available)
+        let diskUsed = max(0, r.disk.total - r.disk.available)
+        let (usedValue, usedUnit) = Fmt.storage(diskUsed)
         let (downValue, downUnit) = Fmt.rate(r.network.downRate)
         let netScale = Fmt.rateScale(recent.suffix(58).map(\.down).max() ?? 0)
 
@@ -322,11 +337,12 @@ final class Monitor {
                           Stat(label: "Average", value: Fmt.percent(gpuAverage)),
                           Stat(label: "Peak", value: Fmt.percent(gpuPeak))],
                   trace: trace(\.gpu, scale: 100), symbol: "square.stack.3d.up"),
-            Vital(name: "Disk", caption: "Free of \(Fmt.storageText(r.disk.total))", value: freeValue, unit: freeUnit,
-                  fraction: r.disk.total > 0 ? r.disk.available / r.disk.total : 0, scale: ("0", Fmt.storageText(r.disk.total)),
-                  stats: [Stat(label: "Reading", value: Fmt.rateText(r.disk.readRate)),
-                          Stat(label: "Writing", value: Fmt.rateText(r.disk.writeRate)),
-                          Stat(label: "Written since launch", value: Fmt.storageText(r.disk.writtenSinceLaunch))],
+            // Used, not free, so a fuller bar means the same thing on every channel.
+            Vital(name: "Disk", caption: "Used of \(Fmt.storageText(r.disk.total))", value: usedValue, unit: usedUnit,
+                  fraction: r.disk.total > 0 ? diskUsed / r.disk.total : 0, scale: ("0", Fmt.storageText(r.disk.total)),
+                  stats: [Stat(label: "Free", value: Fmt.storageText(r.disk.available)),
+                          Stat(label: "Reading", value: Fmt.rateText(r.disk.readRate)),
+                          Stat(label: "Writing", value: Fmt.rateText(r.disk.writeRate))],
                   trace: trace(\.diskIO), flag: diskLow ? "Low space" : nil, symbol: "internaldrive"),
             Vital(name: "Network", caption: "Downloading", value: downValue, unit: downUnit,
                   fraction: r.network.downRate / netScale, scale: ("0", Fmt.rateText(netScale)),
@@ -352,66 +368,6 @@ final class Monitor {
                               trace: [], symbol: "powerplug"))
         }
         return list
-    }
-
-    // MARK: Notices
-
-    private func buildNotices(_ r: Reading) -> [Notice] {
-        var list: [Notice] = []
-        if let since = memoryWarningSince {
-            let top = r.apps.filter { $0.name != "macOS" }.sorted { $0.memory > $1.memory }.prefix(2)
-            let users = top.map { "\($0.name), \(Fmt.memoryText($0.memory))" }.joined(separator: ", and ")
-            list.append(Notice(tag: "Memory", title: "Memory pressure is elevated",
-                               body: users.isEmpty ? "macOS is compressing memory to keep up." : "The biggest users are \(users).",
-                               hot: true, since: since, target: "Memory"))
-        }
-        for (name, since) in busyApps where sustained(since) {
-            let cpu = r.apps.first { $0.name == name }?.cpu ?? 0
-            list.append(Notice(tag: "CPU", title: "\(name) is using a lot of CPU",
-                               body: "\(Fmt.percent(cpu)) of one core for the last \(max(1, Int(Date().timeIntervalSince(since) / 60))) min.",
-                               hot: true, since: since, target: "CPU"))
-        }
-        if diskLow {
-            list.append(Notice(tag: "Disk", title: "Your startup disk is almost full",
-                               body: "\(Fmt.storageText(r.disk.available)) free of \(Fmt.storageText(r.disk.total)).",
-                               hot: true, since: r.date, target: "Disk"))
-        }
-        if !servers.isEmpty {
-            let idle = servers.allSatisfy(\.idle)
-            let count = servers.count == 1 ? "A dev server is" : "\(servers.count) dev servers are"
-            let byRuntime = Dictionary(grouping: servers, by: \.name)
-            let ports = byRuntime.keys.sorted().map { name in
-                let list = byRuntime[name]!.flatMap(\.ports).sorted().map(String.init)
-                return "\(name) on \(list.formatted(.list(type: .and)))"
-            }
-            .joined(separator: "; ")
-            let memory = Fmt.memoryText(servers.map(\.memory).reduce(0, +))
-            list.append(Notice(tag: "Projects", title: "\(count) running\(idle ? " but idle" : "")",
-                               body: "\(ports). Together they use \(memory).",
-                               hot: false, since: notices.first { $0.tag == "Projects" }?.since ?? r.date, target: "Projects"))
-        }
-        if let health = r.battery?.health, health < 80 {
-            list.append(Notice(tag: "Battery", title: "Battery health is \(Fmt.percent(health))",
-                               body: "Cycle count \(r.battery?.cycles ?? 0). Capacity is below 80% of its design.",
-                               hot: false, since: r.date, target: "Battery"))
-        }
-        return list
-    }
-
-    private func buildStatus() -> [StatusItem] {
-        let flagged = vitals.filter { $0.flag != nil }
-        let names = flagged.map { v -> String in
-            switch v.name {
-            case "Memory": "Memory pressure \(v.flag!.lowercased())"
-            case "CPU": "CPU load high"
-            case "Disk": "Startup disk low on space"
-            case "Battery": "Battery low"
-            default: "\(v.name) \(v.flag!.lowercased())"
-            }
-        }
-        let normal = vitals.count - flagged.count
-        if flagged.isEmpty { return [StatusItem(on: false, text: "All \(normal) readings normal")] }
-        return names.map { StatusItem(on: true, text: $0) } + [StatusItem(on: false, text: "\(normal) readings normal")]
     }
 
     // MARK: Breakdowns

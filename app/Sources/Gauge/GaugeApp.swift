@@ -5,6 +5,7 @@ struct GaugeApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var monitor = Monitor()
     @StateObject private var updates = Updates()
+    @AppStorage(AppDelegate.menuBarKey) private var showInMenuBar = true
 
     var body: some Scene {
         Window("Gauge", id: "main") {
@@ -26,6 +27,14 @@ struct GaugeApp: App {
             }
         }
 
+        MenuBarExtra(isInserted: $showInMenuBar) {
+            MenuBarPanel(monitor: monitor)
+                .preferredColorScheme(.dark)
+        } label: {
+            MenuBarLabel(monitor: monitor)
+        }
+        .menuBarExtraStyle(.window)
+
         Settings {
             SettingsView(updates: updates)
                 .environment(monitor)
@@ -35,7 +44,12 @@ struct GaugeApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    static let menuBarKey = "showInMenuBar"
+
+    /// With the menu bar extra on, closing the window leaves Gauge running in the menu bar.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        UserDefaults.standard.object(forKey: Self.menuBarKey) as? Bool == false
+    }
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated { Snapshot.scheduleIfRequested() }
     }
@@ -45,6 +59,7 @@ struct SettingsView: View {
     @ObservedObject var updates: Updates
     @Environment(Monitor.self) private var monitor
     @AppStorage("historyRetentionDays") private var days = 30
+    @AppStorage(AppDelegate.menuBarKey) private var showInMenuBar = true
     @State private var confirmClear = false
     @State private var size = HistoryStore.sizeOnDisk
 
@@ -70,6 +85,14 @@ struct SettingsView: View {
                 Text("History")
             } footer: {
                 Text("History stays on your Mac. Readings are averaged every 10 seconds and older entries are removed automatically.")
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                Toggle("Show Gauge in the menu bar", isOn: $showInMenuBar)
+            } header: {
+                Text("Menu bar")
+            } footer: {
+                Text("Shows CPU in the menu bar, with all six vitals a click away. While it's on, closing the window keeps Gauge running.")
                     .foregroundStyle(.secondary)
             }
             UpdatesSettings(updates: updates)

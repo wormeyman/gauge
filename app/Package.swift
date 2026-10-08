@@ -13,13 +13,19 @@ let package = Package(
             name: "Gauge",
             dependencies: [.product(name: "Sparkle", package: "Sparkle")],
             path: "Sources/Gauge",
-            swiftSettings: [.swiftLanguageMode(.v5)],
+            swiftSettings: [.swiftLanguageMode(.v6)],
             linkerSettings: [
                 .linkedFramework("IOKit"),
                 .linkedFramework("CoreAudio"),
                 .linkedLibrary("sqlite3"),
                 .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
             ]
-        )
+        ),
+        .testTarget(
+            name: "GaugeTests",
+            dependencies: ["Gauge"],
+            path: "Tests/GaugeTests",
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
     ]
 )
