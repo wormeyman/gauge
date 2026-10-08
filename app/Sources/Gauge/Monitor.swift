@@ -57,15 +57,6 @@ struct HardwareCard: Identifiable {
     var note: String?
 }
 
-/// A stop request on a dev server that hasn't finished.
-enum ServerStop: Equatable {
-    case stopping
-    /// Still running a few seconds after the stop request; it can be forced.
-    case stillRunning
-    /// Owned by another user, such as a server started with sudo.
-    case notPermitted
-}
-
 struct StatusItem: Identifiable {
     var id: String { text }
     var on: Bool
@@ -127,9 +118,6 @@ final class Monitor {
     var hardware: [HardwareCard] = []
     var apps: [AppUsage] = []
     var servers: [DevServer] = []
-    var serverStops: [Int32: ServerStop] = [:]
-    /// Apps Gauge can quit, under the names the process list uses. Refreshed with each published reading.
-    private(set) var quittable: [String: [NSRunningApplication]] = [:]
     var status: [StatusItem] = []
     var processCount = 0
     var appCount = 0
@@ -219,10 +207,7 @@ final class Monitor {
         guard r.cpuUser != nil else { return }
         latest = r
         ticks += 1
-        if let servers = r.servers {
-            serverList = servers
-            serverStops = serverStops.filter { pid, _ in servers.contains { $0.pid == pid } }
-        }
+        if let servers = r.servers { serverList = servers }
 
         let cpu = (r.cpuUser ?? 0) + (r.cpuSystem ?? 0)
         cpuNow = cpu
@@ -243,7 +228,6 @@ final class Monitor {
     private func publish(_ r: Reading) {
         let cpu = (r.cpuUser ?? 0) + (r.cpuSystem ?? 0)
         appCount = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }.count
-        quittable = ProcessControl.quittableApps()
         processCount = r.processCount
         apps = r.apps.sorted { $0.cpu > $1.cpu }
         servers = serverList
@@ -294,42 +278,6 @@ final class Monitor {
             self?.topApps = []
             self?.oldestSample = nil
         }
-    }
-
-    // MARK: Stopping servers and quitting apps
-
-    func canQuit(_ app: String) -> Bool { quittable[app] != nil }
-
-    /// Asks an app to quit, like its Quit menu item, so it can still offer to save documents.
-    /// A forced quit ends it immediately and loses unsaved changes.
-    func quit(_ app: String, force: Bool) {
-        for running in quittable[app] ?? [] { _ = force ? running.forceTerminate() : running.terminate() }
-        quittable[app] = nil
-    }
-
-    /// Sends a server the stop signal (SIGKILL when forced), then watches for it to exit.
-    func stop(_ server: DevServer, force: Bool = false) {
-        switch ProcessControl.signal(server.pid, started: server.started, force: force) {
-        case .notPermitted: serverStops[server.pid] = .notPermitted; return
-        case .gone: removeServer(server); return
-        case .sent: serverStops[server.pid] = .stopping
-        }
-        Task { [weak self] in
-            for _ in 0..<20 {
-                try? await Task.sleep(for: .milliseconds(250))
-                guard let self else { return }
-                if !ProcessControl.isRunning(server.pid, started: server.started) { self.removeServer(server); return }
-            }
-            self?.serverStops[server.pid] = .stillRunning
-        }
-    }
-
-    private func removeServer(_ server: DevServer) {
-        serverStops[server.pid] = nil
-        serverList.removeAll { $0.pid == server.pid }
-        if let latest { publish(latest) }
-        let sampler = sampler
-        queue.async { sampler.rescanServersSoon() }
     }
 
     // MARK: Flags
