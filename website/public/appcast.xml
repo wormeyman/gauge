@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Gauge</title>
+    <link>https://gauge.alex.codes/appcast.xml</link>
+    <description>Updates for Gauge, a private system monitor for macOS.</description>
+    <language>en</language>
+    <!-- Newest release first. release.sh inserts items here. -->
+    <item>
+      <title>Gauge 0.3.0</title>
+      <pubDate>Thu, 08 Oct 2026 16:26:06 GMT</pubDate>
+      <sparkle:version>3</sparkle:version>
+      <sparkle:shortVersionString>0.3.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<ul><li>Gauge lives in the menu bar: CPU up top, and a click shows all six vitals and the top notice. Closing the window keeps Gauge running; turn it off in Settings.</li><li>The disk channel shows used space, so a fuller bar means the same thing on every channel.</li><li>Game servers, such as Minecraft on Java, are listed on Projects but no longer counted as dev servers.</li><li>The status bar shows Gauge&#x27;s own CPU and memory.</li><li>Lighter animations: only the readout and the scale fill move when a reading changes.</li><li>Tests for formatting, process grouping, dev-server detection, notices and history.</li></ul>]]></description>
+      <enclosure url="https://github.com/byalex33/gauge/releases/download/v0.3.0/Gauge-0.3.0.dmg"
+                 type="application/octet-stream"
+                 sparkle:edSignature="6Ry2Jko+VrKoto3wI2KIqYZolpVjW6QE5hblxqo6Z84CeuMfNrmzYtMgz8sTurNYYBjPQUectK0ZsCyr9VwcAg=="
+                 length="2368771"/>
+    </item>
+  </channel>
+</rss>
