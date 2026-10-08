@@ -87,7 +87,7 @@ Everything comes from public macOS interfaces. Gauge needs no administrator acce
 | Network download and upload | `sysctl` 64-bit interface counters (Wi-Fi, Ethernet, cellular) |
 | Battery charge, time, power and health | IOKit power sources and `AppleSmartBattery` |
 | Per-app CPU and memory footprint | `libproc` |
-| Local dev servers | `lsof` listening TCP sockets |
+| Local dev servers | `proc_pidinfo` listening TCP sockets |
 | Audio output and Bluetooth accessory batteries | CoreAudio, IOKit |
 
 > [!NOTE]

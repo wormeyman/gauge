@@ -49,7 +49,7 @@ Gauge samples public macOS counters every 2 seconds, with no administrator acces
 | Network | `sysctl` interface counters (Wi-Fi, Ethernet, cellular) |
 | Battery | IOKit power sources and `AppleSmartBattery` |
 | Apps and processes | `libproc` (your own processes; other users' need admin access) |
-| Dev servers | `lsof` listening TCP ports for Node, Python, Ruby and similar |
+| Dev servers | `proc_pidinfo` listening TCP sockets of Node, Python, Ruby and similar processes |
 | Audio, Bluetooth batteries | CoreAudio, IOKit |
 
 Temperature and fan sensors are not read yet; they need a privileged helper.

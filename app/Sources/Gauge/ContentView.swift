@@ -8,6 +8,8 @@ struct ContentView: View {
     @State private var page = "Overview"
     @State private var width: CGFloat = 1200
     @State private var exporting = false
+    /// Built when an export starts, not on every redraw.
+    @State private var exportDocument: CSVDocument?
     @AppStorage("chartBars") private var bars = false
 
     var body: some View {
@@ -45,9 +47,9 @@ struct ContentView: View {
                 .accessibilityHidden(true)
         }
         .sheet(item: $sheet) { SheetView(kind: $0) }
-        .fileExporter(isPresented: $exporting, document: CSVDocument(text: monitor.csv()),
-                      contentType: .commaSeparatedText, defaultFilename: "Gauge history") { _ in }
-        .onReceive(NotificationCenter.default.publisher(for: .gaugeExport)) { _ in exporting = true }
+        .fileExporter(isPresented: $exporting, document: exportDocument,
+                      contentType: .commaSeparatedText, defaultFilename: "Gauge history") { _ in exportDocument = nil }
+        .onReceive(NotificationCenter.default.publisher(for: .gaugeExport)) { _ in export() }
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 HStack(spacing: 9) {
@@ -68,13 +70,18 @@ struct ContentView: View {
     @ViewBuilder private var current: some View {
         switch page {
         case "Overview":
-            OverviewPage(monitor: monitor, width: width, bars: $bars, export: { exporting = true },
+            OverviewPage(monitor: monitor, width: width, bars: $bars, export: export,
                          open: { sheet = $0 }, select: select)
         case "Projects":
             ProjectsPage(monitor: monitor) { select("Overview") }
         default:
             DetailPage(name: page, monitor: monitor, width: width) { select("Overview") }
         }
+    }
+
+    private func export() {
+        exportDocument = CSVDocument(text: monitor.csv())
+        exporting = true
     }
 
     private func select(_ name: String) {

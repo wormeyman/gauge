@@ -100,9 +100,20 @@ final class Sampler: @unchecked Sendable {
     private var diskWriteBase: UInt64?
     private var previousProcesses: [Int32: UInt64] = [:]
     private var previousProcessWall: UInt64 = 0
+    /// App and command names by PID, so a process's path is only looked up and parsed once.
+    private var names: [Int32: ProcessName] = [:]
     private var lastVolumeCheck = Date.distantPast
     private var volume: (name: String, total: Double, available: Double) = ("Macintosh HD", 0, 0)
     private var lastServerScan = Date.distantPast
+    private var gpuService: io_object_t = 0
+    private var batteryService: io_object_t = 0
+    private var lastBatteryHealthCheck = Date.distantPast
+    private var batteryHealth: (health: Double?, cycles: Int?) = (nil, nil)
+    private var audio: (playing: Bool, device: String?) = (false, nil)
+    private var accessories: [(name: String, percent: Int)] = []
+    /// False while no Gauge window or panel is visible. Readings only shown on screen (audio,
+    /// accessories, dev servers) then keep their last values instead of being sampled.
+    var detail = true
     private let ownPID = getpid()
     /// Bytes per page for host_statistics64 counts (vm_kernel_page_size isn't concurrency-safe to read).
     private let pageSize = Double(Sampler.sysctlInt64("vm.pagesize") ?? 16_384)
@@ -130,14 +141,17 @@ final class Sampler: @unchecked Sendable {
         r.processCount = processes.count
         r.cpuSecondsDelta = processes.cpuDelta
         if let own = processes.byPID[ownPID] { r.selfUsage = SelfUsage(cpu: own.cpu, memory: own.memory) }
-        if !priming, r.date.timeIntervalSince(lastServerScan) >= 15 {
+        if !priming, detail, r.date.timeIntervalSince(lastServerScan) >= 15 {
             lastServerScan = r.date
             r.servers = scanDevServers(processes: processes.byPID)
         }
-        let audio = readAudio()
+        if detail {
+            audio = readAudio()
+            accessories = readAccessoryBatteries()
+        }
         r.audioPlaying = audio.playing
         r.audioDevice = audio.device
-        r.accessories = readAccessoryBatteries()
+        r.accessories = accessories
         return r
     }
 
@@ -198,21 +212,30 @@ final class Sampler: @unchecked Sendable {
     // MARK: GPU
 
     private func readGPU() -> (utilization: Double, memory: Double)? {
+        if gpuService != 0, let reading = Sampler.gpuStatistics(gpuService) { return reading }
+        // First read, or the cached accelerator stopped answering: find the one that reports statistics.
+        if gpuService != 0 { IOObjectRelease(gpuService); gpuService = 0 }
         var iterator: io_iterator_t = 0
         guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOAccelerator"), &iterator) == KERN_SUCCESS else { return nil }
         defer { IOObjectRelease(iterator) }
         var entry = IOIteratorNext(iterator)
         while entry != 0 {
-            defer { IOObjectRelease(entry); entry = IOIteratorNext(iterator) }
-            guard let stats = IORegistryEntryCreateCFProperty(entry, "PerformanceStatistics" as CFString, kCFAllocatorDefault, 0)?
-                .takeRetainedValue() as? [String: Any] else { continue }
-            let utilization = (stats["Device Utilization %"] as? NSNumber) ?? (stats["GPU Activity(%)"] as? NSNumber)
-            if let utilization {
-                let memory = (stats["In use system memory"] as? NSNumber)?.doubleValue ?? 0
-                return (utilization.doubleValue, memory)
+            if let reading = Sampler.gpuStatistics(entry) {
+                gpuService = entry
+                return reading
             }
+            IOObjectRelease(entry)
+            entry = IOIteratorNext(iterator)
         }
         return nil
+    }
+
+    private static func gpuStatistics(_ entry: io_object_t) -> (utilization: Double, memory: Double)? {
+        // NSDictionary reads the registry's CFDictionary in place instead of bridging every entry.
+        guard let stats = IORegistryEntryCreateCFProperty(entry, "PerformanceStatistics" as CFString, kCFAllocatorDefault, 0)?
+            .takeRetainedValue() as? NSDictionary,
+            let utilization = (stats["Device Utilization %"] as? NSNumber) ?? (stats["GPU Activity(%)"] as? NSNumber) else { return nil }
+        return (utilization.doubleValue, (stats["In use system memory"] as? NSNumber)?.doubleValue ?? 0)
     }
 
     // MARK: Disk
@@ -234,7 +257,7 @@ final class Sampler: @unchecked Sendable {
             var entry = IOIteratorNext(iterator)
             while entry != 0 {
                 if let stats = IORegistryEntryCreateCFProperty(entry, "Statistics" as CFString, kCFAllocatorDefault, 0)?
-                    .takeRetainedValue() as? [String: Any] {
+                    .takeRetainedValue() as? NSDictionary {
                     read += (stats["Bytes (Read)"] as? NSNumber)?.uint64Value ?? 0
                     write += (stats["Bytes (Write)"] as? NSNumber)?.uint64Value ?? 0
                 }
@@ -286,12 +309,16 @@ final class Sampler: @unchecked Sendable {
             while offset + MemoryLayout<if_msghdr>.size <= length {
                 let header = raw.loadUnaligned(fromByteOffset: offset, as: if_msghdr.self)
                 guard header.ifm_msglen > 0 else { break }
-                if header.ifm_type == UInt8(RTM_IFINFO2), offset + MemoryLayout<if_msghdr2>.size <= length {
+                let linkOffset = offset + MemoryLayout<if_msghdr2>.size
+                if header.ifm_type == UInt8(RTM_IFINFO2), linkOffset + MemoryLayout<sockaddr_dl>.size <= length {
                     let info = raw.loadUnaligned(fromByteOffset: offset, as: if_msghdr2.self)
-                    var name = [CChar](repeating: 0, count: Int(IF_NAMESIZE))
-                    if if_indextoname(UInt32(info.ifm_index), &name) != nil {
-                        let interface = String(cBuffer: name)
-                        if interface.hasPrefix("en") || interface.hasPrefix("pdp_ip") {
+                    // The interface's name follows in a link-level address, so no lookup by index is needed.
+                    let link = raw.loadUnaligned(fromByteOffset: linkOffset, as: sockaddr_dl.self)
+                    let nameStart = linkOffset + MemoryLayout<sockaddr_dl>.offset(of: \.sdl_data)!
+                    let nameEnd = nameStart + Int(link.sdl_nlen)
+                    if link.sdl_family == UInt8(AF_LINK), nameEnd <= length {
+                        let name = UnsafeRawBufferPointer(rebasing: raw[nameStart..<nameEnd])
+                        if name.starts(with: "en".utf8) || name.starts(with: "pdp_ip".utf8) {
                             down += info.ifm_data.ifi_ibytes
                             up += info.ifm_data.ifi_obytes
                         }
@@ -309,7 +336,7 @@ final class Sampler: @unchecked Sendable {
         guard let blob = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
               let sources = IOPSCopyPowerSourcesList(blob)?.takeRetainedValue() as? [CFTypeRef] else { return nil }
         for source in sources {
-            guard let d = IOPSGetPowerSourceDescription(blob, source)?.takeUnretainedValue() as? [String: Any],
+            guard let d = IOPSGetPowerSourceDescription(blob, source)?.takeUnretainedValue() as? NSDictionary,
                   (d["Type"] as? String) == "InternalBattery" else { continue }
             let current = (d["Current Capacity"] as? Int) ?? 0
             let maximum = max(1, (d["Max Capacity"] as? Int) ?? 100)
@@ -318,22 +345,28 @@ final class Sampler: @unchecked Sendable {
                                    onAC: (d["Power Source State"] as? String) == "AC Power")
             if let full = d["Time to Full Charge"] as? Int, full > 0 { b.minutesToFull = full }
             if let empty = d["Time to Empty"] as? Int, empty > 0 { b.minutesToEmpty = empty }
-            let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
-            if service != 0 {
-                defer { IOObjectRelease(service) }
-                var props: Unmanaged<CFMutableDictionary>?
-                if IORegistryEntryCreateCFProperties(service, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
-                   let p = props?.takeRetainedValue() as? [String: Any] {
-                    if let volts = (p["Voltage"] as? NSNumber)?.doubleValue,
-                       let amps = (p["InstantAmperage"] as? NSNumber ?? p["Amperage"] as? NSNumber)?.int64Value {
-                        b.watts = abs(volts * Double(amps)) / 1_000_000
-                    }
-                    if let raw = (p["AppleRawMaxCapacity"] as? NSNumber)?.doubleValue,
-                       let design = (p["DesignCapacity"] as? NSNumber)?.doubleValue, design > 0 {
-                        b.health = min(100, raw / design * 100)
-                    }
-                    b.cycles = (p["CycleCount"] as? NSNumber)?.intValue
+            if batteryService == 0 {
+                batteryService = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
+            }
+            if batteryService != 0 {
+                // Individual properties: the full AppleSmartBattery dictionary is large and slow to copy.
+                func number(_ key: String) -> NSNumber? {
+                    IORegistryEntryCreateCFProperty(batteryService, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? NSNumber
                 }
+                if let volts = number("Voltage")?.doubleValue, let amps = (number("InstantAmperage") ?? number("Amperage"))?.int64Value {
+                    b.watts = abs(volts * Double(amps)) / 1_000_000
+                }
+                // Capacity and cycle count change over weeks, so they're read once a minute.
+                if Date().timeIntervalSince(lastBatteryHealthCheck) >= 60 {
+                    lastBatteryHealthCheck = Date()
+                    var health: Double?
+                    if let raw = number("AppleRawMaxCapacity")?.doubleValue, let design = number("DesignCapacity")?.doubleValue, design > 0 {
+                        health = min(100, raw / design * 100)
+                    }
+                    batteryHealth = (health, number("CycleCount")?.intValue)
+                }
+                b.health = batteryHealth.health
+                b.cycles = batteryHealth.cycles
             }
             return b
         }
@@ -350,6 +383,13 @@ final class Sampler: @unchecked Sendable {
         var memory: Double
     }
 
+    /// A process's names, valid while its start time and command name stay the same.
+    private struct ProcessName {
+        var started: UInt64
+        var command: String
+        var app: String
+    }
+
     private func readProcesses() -> (apps: [AppUsage], count: Int, cpuDelta: [String: Double], byPID: [Int32: ProcessSample]) {
         let estimate = proc_listallpids(nil, 0)
         guard estimate > 0 else { return ([], 0, [:], [:]) }
@@ -359,15 +399,16 @@ final class Sampler: @unchecked Sendable {
         let wallDelta = previousProcessWall > 0 ? toSeconds(wall - previousProcessWall) : 0
         var groups: [String: AppUsage] = [:]
         var delta: [String: Double] = [:]
-        var byPID: [Int32: ProcessSample] = [:]
-        var ticks: [Int32: UInt64] = [:]
-        var pathBuffer = [CChar](repeating: 0, count: 4096)
-        var nameBuffer = [CChar](repeating: 0, count: 256)
+        var byPID: [Int32: ProcessSample] = Dictionary(minimumCapacity: found)
+        var ticks: [Int32: UInt64] = Dictionary(minimumCapacity: found)
+        var seenNames: [Int32: ProcessName] = Dictionary(minimumCapacity: found)
 
         for pid in pids.prefix(found) where pid > 0 {
-            var task = proc_taskinfo()
-            let size = Int32(MemoryLayout<proc_taskinfo>.size)
-            guard proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &task, size) == size else { continue }
+            // One call returns CPU time, resident size, start time and command name.
+            var all = proc_taskallinfo()
+            let size = Int32(MemoryLayout<proc_taskallinfo>.size)
+            guard proc_pidinfo(pid, PROC_PIDTASKALLINFO, 0, &all, size) == size else { continue }
+            let task = all.ptinfo
             let total = task.pti_total_user + task.pti_total_system
             ticks[pid] = total
             var usage = rusage_info_v4()
@@ -375,12 +416,18 @@ final class Sampler: @unchecked Sendable {
                 $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(pid, RUSAGE_INFO_V4, $0) }
             } == 0 ? Double(usage.ri_phys_footprint) : Double(task.pti_resident_size)
 
-            pathBuffer[0] = 0
-            nameBuffer[0] = 0
-            proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count))
-            proc_name(pid, &nameBuffer, UInt32(nameBuffer.count))
-            let command = String(cBuffer: nameBuffer)
-            let app = Sampler.appName(path: String(cBuffer: pathBuffer), command: command)
+            // Like proc_name: the long name when set, else the short one.
+            let command = all.pbsd.pbi_name.0 != 0 ? Sampler.string(all.pbsd.pbi_name) : Sampler.string(all.pbsd.pbi_comm)
+            let started = all.pbsd.pbi_start_tvsec &* 1_000_000 &+ all.pbsd.pbi_start_tvusec
+            var name = names[pid]
+            if name == nil || name?.started != started || name?.command != command {
+                var path = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
+                proc_pidpath(pid, &path, UInt32(path.count))
+                name = ProcessName(started: started, command: command,
+                                   app: Sampler.appName(path: String(cBuffer: path), command: command))
+            }
+            seenNames[pid] = name
+            let app = name?.app ?? command
 
             var seconds = 0.0
             if let before = previousProcesses[pid], total >= before { seconds = toSeconds(total - before) }
@@ -394,9 +441,17 @@ final class Sampler: @unchecked Sendable {
             group.cpuTime += toSeconds(total)
             groups[app] = group
         }
+        names = seenNames  // drops processes that exited
         previousProcesses = ticks
         previousProcessWall = wall
         return (Array(groups.values), found, wallDelta > 0 ? delta : [:], byPID)
+    }
+
+    /// A string from a fixed-size, NUL-terminated C char array imported as a tuple.
+    private static func string<T>(_ tuple: T) -> String {
+        withUnsafeBytes(of: tuple) { raw in
+            String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
+        }
     }
 
     private func toSeconds(_ machTicks: UInt64) -> Double {
@@ -432,19 +487,15 @@ final class Sampler: @unchecked Sendable {
     static let devCommands = ["node", "bun", "deno", "python", "ruby", "java", "php", "uvicorn", "gunicorn",
                                       "puma", "rails", "next-server", "vite", "esbuild", "hugo", "jekyll", "dotnet", "beam.smp"]
 
-    /// Local servers the user started, found via lsof's listening TCP sockets.
+    /// Local servers the user started: processes on a dev runtime with listening TCP sockets.
+    /// Only those processes' file descriptors are inspected, which is far cheaper than running lsof.
     private func scanDevServers(processes: [Int32: ProcessSample]) -> [DevServer] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-        process.arguments = ["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn", "+c", "0"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        guard (try? process.run()) != nil else { return [] }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-
-        let listeners = Sampler.parseListeners(String(decoding: data, as: UTF8.self))
+        var listeners: [Listener] = []
+        for (pid, process) in processes where Sampler.isDevCommand(process.command) {
+            for port in Sampler.listeningPorts(pid) {
+                listeners.append(Listener(pid: pid, command: process.command, port: port))
+            }
+        }
         return Sampler.servers(from: listeners).map { server in
             var server = server
             server.folder = Sampler.workingFolder(server.pid)
@@ -461,23 +512,30 @@ final class Sampler: @unchecked Sendable {
         var port: Int
     }
 
-    /// Parses `lsof -F pcn` output: "p<pid>", "c<command>" and "n<address:port>" lines, one field per line.
-    static func parseListeners(_ output: String) -> [Listener] {
-        var result: [Listener] = []
-        var pid: Int32 = 0, command = ""
-        for line in output.split(separator: "\n") {
-            guard let tag = line.first else { continue }
-            let value = String(line.dropFirst())
-            switch tag {
-            case "p": pid = Int32(value) ?? 0; command = ""
-            case "c": command = value
-            case "n":
-                guard pid > 0, let port = value.split(separator: ":").last.flatMap({ Int($0) }) else { continue }
-                result.append(Listener(pid: pid, command: command, port: port))
-            default: break
-            }
+    static func isDevCommand(_ command: String) -> Bool {
+        let lower = command.lowercased()
+        return devCommands.contains { lower.hasPrefix($0) }
+    }
+
+    /// Ports a process has TCP sockets listening on (IPv4 and IPv6), like `lsof -iTCP -sTCP:LISTEN`.
+    static func listeningPorts(_ pid: Int32) -> [Int] {
+        let stride = MemoryLayout<proc_fdinfo>.stride
+        let needed = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nil, 0)
+        guard needed > 0 else { return [] }
+        var fds = [proc_fdinfo](repeating: proc_fdinfo(), count: Int(needed) / stride + 16)
+        let used = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, &fds, Int32(fds.count * stride))
+        guard used > 0 else { return [] }
+        var ports: [Int] = []
+        for fd in fds.prefix(Int(used) / stride) where fd.proc_fdtype == UInt32(PROX_FDTYPE_SOCKET) {
+            var info = socket_fdinfo()
+            let size = Int32(MemoryLayout<socket_fdinfo>.size)
+            guard proc_pidfdinfo(pid, fd.proc_fd, PROC_PIDFDSOCKETINFO, &info, size) == size,
+                  info.psi.soi_kind == Int32(SOCKINFO_TCP),
+                  info.psi.soi_proto.pri_tcp.tcpsi_state == TSI_S_LISTEN else { continue }
+            let port = Int(UInt16(bigEndian: UInt16(truncatingIfNeeded: info.psi.soi_proto.pri_tcp.tcpsi_ini.insi_lport)))
+            if port > 0, !ports.contains(port) { ports.append(port) }
         }
-        return result
+        return ports
     }
 
     /// Groups listeners by process and keeps the ones on a dev runtime, sorted by first port.
@@ -485,8 +543,7 @@ final class Sampler: @unchecked Sendable {
     static func servers(from listeners: [Listener]) -> [DevServer] {
         var servers: [Int32: DevServer] = [:]
         for listener in listeners {
-            let lower = listener.command.lowercased()
-            guard devCommands.contains(where: { lower.hasPrefix($0) }) else { continue }
+            guard isDevCommand(listener.command) else { continue }
             var server = servers[listener.pid] ?? DevServer(pid: listener.pid, name: appName(path: "", command: listener.command),
                                                             folder: "", ports: [], cpu: 0, memory: 0)
             if !server.ports.contains(listener.port) { server.ports.append(listener.port) }
