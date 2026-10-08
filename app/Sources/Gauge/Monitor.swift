@@ -3,7 +3,7 @@ import Observation
 
 struct Stat: Hashable { var label: String; var value: String }
 
-struct Vital: Identifiable {
+struct Vital: Identifiable, Equatable {
     var id: String { name }
     var name: String
     var caption: String
@@ -17,9 +17,14 @@ struct Vital: Identifiable {
     var trace: [Double]
     var flag: String?
     var symbol: String
+
+    static func == (a: Vital, b: Vital) -> Bool {
+        a.name == b.name && a.caption == b.caption && a.value == b.value && a.unit == b.unit && a.fraction == b.fraction
+            && a.scale == b.scale && a.stats == b.stats && a.trace == b.trace && a.flag == b.flag && a.symbol == b.symbol
+    }
 }
 
-struct Notice: Identifiable {
+struct Notice: Identifiable, Equatable {
     var id: String { tag + title }
     var tag: String
     var title: String
@@ -29,7 +34,7 @@ struct Notice: Identifiable {
     var target: String
 }
 
-struct Slice: Identifiable {
+struct Slice: Identifiable, Equatable {
     var id: String { name }
     var name: String
     var value: String
@@ -37,7 +42,7 @@ struct Slice: Identifiable {
     var hot = false
 }
 
-struct Breakdown: Identifiable {
+struct Breakdown: Identifiable, Equatable {
     var id: String { title }
     /// The metric whose colour the ring uses.
     var metric: String
@@ -48,7 +53,7 @@ struct Breakdown: Identifiable {
     var slices: [Slice]
 }
 
-struct HardwareCard: Identifiable {
+struct HardwareCard: Identifiable, Equatable {
     var id: String { title }
     /// Colour key for the card's dot.
     var tone: String
@@ -66,7 +71,7 @@ enum ServerStop: Equatable {
     case notPermitted
 }
 
-struct StatusItem: Identifiable {
+struct StatusItem: Identifiable, Equatable {
     var id: String { text }
     var on: Bool
     var text: String
@@ -128,15 +133,16 @@ final class Monitor {
     var apps: [AppUsage] = []
     var servers: [DevServer] = []
     var serverStops: [Int32: ServerStop] = [:]
-    /// Apps Gauge can quit, under the names the process list uses. Refreshed with each published reading.
+    /// Apps Gauge can quit, under the names the process list uses. Refreshed when apps launch or quit.
     private(set) var quittable: [String: [NSRunningApplication]] = [:]
     var status: [StatusItem] = []
     var processCount = 0
     var appCount = 0
     var machine = ""
     var recent: [RecentSample] = []
-    /// Updated every tick, even while no window is visible, for the menu bar label.
-    var cpuNow: Double?
+    /// Whole-percent CPU for the menu bar label. Updated every tick, even while no window is visible,
+    /// but only changes (and redraws the label) when the rounded value does.
+    var cpuNow: Int?
     /// A page the menu bar panel asked the main window to show; the window clears it.
     var requestedPage: String?
     /// Gauge's own cost, averaged over the last 30 seconds.
@@ -148,32 +154,55 @@ final class Monitor {
     var topApps: [(String, Double)] = []
     var oldestSample: Date?
 
-    let store = HistoryStore()
-    let sampler = Sampler()
-    private let queue = DispatchQueue(label: "gauge.sampler", qos: .utility)
-    private var timer: Timer?
+    @ObservationIgnored let store = HistoryStore()
+    @ObservationIgnored let sampler = Sampler()
+    // Bookkeeping no view reads directly, kept out of observation tracking.
+    @ObservationIgnored private let queue = DispatchQueue(label: "gauge.sampler", qos: .utility)
+    @ObservationIgnored private var timer: Timer?
     private(set) var latest: Reading?
-    private var pending: [Reading] = []
-    private var pendingCPU: [String: Double] = [:]
-    private var ticks = 0
-    private var serverList: [DevServer] = []
-    private var memoryWarningSince: Date?
-    private var busyApps: [String: Date] = [:]
-    private var cpuHighSince: Date?
-    private var gpuPeak = 0.0
-    private var selfSamples: [SelfUsage] = []
+    @ObservationIgnored private var pending: [Reading] = []
+    @ObservationIgnored private var pendingCPU: [String: Double] = [:]
+    @ObservationIgnored private var ticks = 0
+    @ObservationIgnored private var serverList: [DevServer] = []
+    @ObservationIgnored private var memoryWarningSince: Date?
+    @ObservationIgnored private var busyApps: [String: Date] = [:]
+    @ObservationIgnored private var cpuHighSince: Date?
+    @ObservationIgnored private var gpuPeak = 0.0
+    @ObservationIgnored private var selfSamples: [SelfUsage] = []
+    @ObservationIgnored private var workspaceObservers: [NSObjectProtocol] = []
 
     var visibleNotices: [Notice] { notices.filter { !dismissed.contains($0.id) } }
 
     /// False while no Gauge window is visible: sampling and history continue, view updates pause.
-    private var windowVisible = true
+    @ObservationIgnored private var windowVisible = true
     /// True while the menu bar panel is open.
-    private var panelVisible = false
-    private var occlusionObserver: NSObjectProtocol?
+    @ObservationIgnored private var panelVisible = false
+    @ObservationIgnored private var occlusionObservers: [NSObjectProtocol] = []
+
+    /// True while a Gauge window (the main window or Settings) is on screen and not fully covered. The
+    /// menu bar's status item and panel don't count; the panel reports itself through setPanelVisible.
+    private func updateWindowVisibility() {
+        // The key window counts too, so a window the user is working in always updates.
+        let visible = NSApp.windows.contains { $0.canBecomeMain && $0.isVisible && ($0.occlusionState.contains(.visible) || $0.isKeyWindow) }
+        guard visible != windowVisible else { return }
+        windowVisible = visible
+        visibilityChanged()
+        if visible, let latest { publish(latest) }
+    }
+
+    /// Whether anything on screen shows the full reading.
+    private var showing: Bool { windowVisible || panelVisible || Snapshot.folder != nil }
 
     func setPanelVisible(_ visible: Bool) {
         panelVisible = visible
+        visibilityChanged()
         if visible, let latest { publish(latest) }
+    }
+
+    /// Readings only shown on screen are skipped while nothing is visible, and resume on the next tick.
+    private func visibilityChanged() {
+        let sampler = sampler, detail = showing
+        queue.async { sampler.detail = detail }
     }
 
     func start() {
@@ -186,18 +215,40 @@ final class Monitor {
             MainActor.assumeIsolated { self?.tick() }
         }
         timer?.tolerance = 0.2
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.tick() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            self?.updateWindowVisibility()
+            self?.tick()
+        }
         reloadHistory()
-        occlusionObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeOcclusionStateNotification,
-                                                                   object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let visible = NSApp.occlusionState.contains(.visible)
-                guard visible != self.windowVisible else { return }
-                self.windowVisible = visible
-                if visible, let latest = self.latest { self.publish(latest) }
+        // Window-level, not NSApp.occlusionState: the menu bar extra's status item is always visible, so the
+        // app as a whole never counts as hidden and views would keep updating behind a closed window.
+        let center = NotificationCenter.default
+        occlusionObservers = [NSWindow.didChangeOcclusionStateNotification, NSWindow.didBecomeKeyNotification,
+                              NSWindow.didResignKeyNotification, NSWindow.willCloseNotification].map {
+            center.addObserver(forName: $0, object: nil, queue: .main) { [weak self] _ in
+                // After the current event, so a closing window has left the window list.
+                DispatchQueue.main.async { self?.updateWindowVisibility() }
             }
         }
+        // Running apps change only when apps launch or quit, so they're counted then rather than every tick.
+        refreshRunningApps()
+        let workspace = NSWorkspace.shared.notificationCenter
+        workspaceObservers = [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification].map {
+            workspace.addObserver(forName: $0, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshRunningApps() }
+            }
+        }
+    }
+
+    private func refreshRunningApps() {
+        update(\.appCount, NSWorkspace.shared.runningApplications.reduce(0) { $0 + ($1.activationPolicy == .regular ? 1 : 0) })
+        update(\.quittable, ProcessControl.quittableApps())
+    }
+
+    /// Assigns only when the value changed: every assignment to an observed property redraws the views
+    /// that read it, even when the new value is the same.
+    private func update<T: Equatable>(_ keyPath: ReferenceWritableKeyPath<Monitor, T>, _ value: T) {
+        if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
     }
 
     static var retentionDays: Int {
@@ -221,11 +272,11 @@ final class Monitor {
         ticks += 1
         if let servers = r.servers {
             serverList = servers
-            serverStops = serverStops.filter { pid, _ in servers.contains { $0.pid == pid } }
+            update(\.serverStops, serverStops.filter { pid, _ in servers.contains { $0.pid == pid } })
         }
 
         let cpu = (r.cpuUser ?? 0) + (r.cpuSystem ?? 0)
-        cpuNow = cpu
+        update(\.cpuNow, Int(cpu.rounded()))
         gpuPeak = max(gpuPeak, r.gpuUtilization ?? 0)
         selfSamples.append(r.selfUsage)
         if selfSamples.count > 15 { selfSamples.removeFirst(selfSamples.count - 15) }
@@ -236,26 +287,24 @@ final class Monitor {
                                    gpu: r.gpuUtilization ?? 0, diskRead: r.disk.readRate, diskWrite: r.disk.writeRate,
                                    down: r.network.downRate, up: r.network.upRate, battery: r.battery?.percent))
         if recent.count > 300 { recent.removeFirst(recent.count - 300) }
-        if windowVisible || panelVisible || !ready || Snapshot.folder != nil { publish(r) }
+        if showing || !ready { publish(r) }
     }
 
     /// Rebuilds everything the views show from a reading.
     private func publish(_ r: Reading) {
         let cpu = (r.cpuUser ?? 0) + (r.cpuSystem ?? 0)
-        appCount = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }.count
-        quittable = ProcessControl.quittableApps()
-        processCount = r.processCount
-        apps = r.apps.sorted { $0.cpu > $1.cpu }
-        servers = serverList
+        update(\.processCount, r.processCount)
+        update(\.apps, r.apps.sorted { $0.cpu > $1.cpu })
+        update(\.servers, serverList)
         let n = Double(max(selfSamples.count, 1))
-        selfUsage = SelfUsage(cpu: selfSamples.map(\.cpu).reduce(0, +) / n, memory: r.selfUsage.memory)
-        vitals = buildVitals(r, cpu: cpu)
-        notices = Notices.build(reading: r, now: Date(), memoryWarningSince: memoryWarningSince, busyApps: busyApps,
-                                servers: serverList, previous: notices)
-        breakdowns = buildBreakdowns(r, cpu: cpu)
-        hardware = buildHardware(r)
-        status = Notices.status(vitals: vitals)
-        ready = true
+        update(\.selfUsage, SelfUsage(cpu: selfSamples.map(\.cpu).reduce(0, +) / n, memory: r.selfUsage.memory))
+        update(\.vitals, buildVitals(r, cpu: cpu))
+        update(\.notices, Notices.build(reading: r, now: Date(), memoryWarningSince: memoryWarningSince, busyApps: busyApps,
+                                         servers: serverList, previous: notices))
+        update(\.breakdowns, buildBreakdowns(r, cpu: cpu))
+        update(\.hardware, buildHardware(r))
+        update(\.status, Notices.status(vitals: vitals))
+        update(\.ready, true)
         if ticks % 15 == 1 { reloadHistory() }
     }
 
@@ -283,9 +332,12 @@ final class Monitor {
 
     func reloadHistory() {
         let since = Date().addingTimeInterval(-Double(period.rawValue))
-        store.series(since: since) { [weak self] points in self?.history = points }
-        store.topApps(since: since) { [weak self] apps in self?.topApps = apps }
-        store.oldestSample { [weak self] date in self?.oldestSample = date }
+        store.series(since: since) { [weak self] points in self?.update(\.history, points) }
+        store.topApps(since: since) { [weak self] apps in
+            guard let self, !apps.elementsEqual(topApps, by: ==) else { return }
+            topApps = apps
+        }
+        store.oldestSample { [weak self] date in self?.update(\.oldestSample, date) }
     }
 
     func clearHistory() {
@@ -305,6 +357,8 @@ final class Monitor {
     func quit(_ app: String, force: Bool) {
         for running in quittable[app] ?? [] { _ = force ? running.forceTerminate() : running.terminate() }
         quittable[app] = nil
+        // If the app is still running a moment later (say, its user cancelled a save prompt), it's offered again.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.refreshRunningApps() }
     }
 
     /// Sends a server the stop signal (SIGKILL when forced), then watches for it to exit.

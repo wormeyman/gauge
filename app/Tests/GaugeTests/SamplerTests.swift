@@ -1,4 +1,5 @@
 import Testing
+import Foundation
 @testable import Gauge
 
 @Suite struct AppNameTests {
@@ -23,66 +24,54 @@ import Testing
 }
 
 @Suite struct DevServerTests {
-    /// Trimmed from real `lsof -nP -iTCP -sTCP:LISTEN -Fpcn +c 0` output.
-    static let lsof = """
-    p471
-    cControlCenter
-    f9
-    n*:7000
-    f11
-    n*:5000
-    p22351
-    cnode
-    f14
-    n*:3000
-    p22385
-    cnext-server (v16.3.0)
-    f14
-    n[::1]:3001
-    f26
-    n127.0.0.1:3002
-    p33910
-    cSpotify
-    f55
-    n*:62451
-    p45199
-    cjava
-    f155
-    n*:25565
-    f179
-    n*:8765
-    p81580
-    cjava
-    f144
-    n*:25566
-    p23533
-    cnode
-    f16
-    n[::1]:5179
-    """
+    /// Listening sockets from a real Mac: system apps, dev runtimes and two Java game servers.
+    static let listeners: [Sampler.Listener] = [
+        .init(pid: 471, command: "ControlCenter", port: 7000),
+        .init(pid: 471, command: "ControlCenter", port: 5000),
+        .init(pid: 22351, command: "node", port: 3000),
+        .init(pid: 22385, command: "next-server (v16.3.0)", port: 3001),
+        .init(pid: 22385, command: "next-server (v16.3.0)", port: 3002),
+        .init(pid: 33910, command: "Spotify", port: 62451),
+        .init(pid: 45199, command: "java", port: 25565),
+        .init(pid: 45199, command: "java", port: 8765),
+        .init(pid: 81580, command: "java", port: 25566),
+        .init(pid: 23533, command: "node", port: 5179),
+    ]
 
-    @Test func parsesEveryListener() {
-        let listeners = Sampler.parseListeners(Self.lsof)
-        #expect(listeners.count == 10)
-        #expect(listeners.first == .init(pid: 471, command: "ControlCenter", port: 7000))
-        #expect(listeners.contains(.init(pid: 22385, command: "next-server (v16.3.0)", port: 3001)))
-        #expect(listeners.contains(.init(pid: 23533, command: "node", port: 5179)))
+    @Test func findsThisProcessListeningSocket() throws {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        try #require(fd >= 0)
+        defer { close(fd) }
+        var address = sockaddr_in()
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+        }
+        try #require(bound == 0)
+        #expect(!Sampler.listeningPorts(getpid()).contains { $0 > 0 && $0 == Self.port(fd) })
+        try #require(listen(fd, 1) == 0)
+        #expect(Sampler.listeningPorts(getpid()).contains(Self.port(fd)))
     }
 
-    @Test func ignoresMalformedLines() {
-        let listeners = Sampler.parseListeners("n*:80\np12\ncnode\nn*:notaport\n\nn[::1]:4000\n")
-        #expect(listeners == [.init(pid: 12, command: "node", port: 4000)])
+    static func port(_ fd: Int32) -> Int {
+        var address = sockaddr_in()
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &length) }
+        }
+        return Int(UInt16(bigEndian: address.sin_port))
     }
 
     @Test func keepsDevRuntimesGroupedByProcess() {
-        let servers = Sampler.servers(from: Sampler.parseListeners(Self.lsof))
+        let servers = Sampler.servers(from: Self.listeners)
         #expect(servers.map(\.pid) == [22351, 22385, 23533, 45199, 81580])
         #expect(servers.first { $0.pid == 22385 }?.ports == [3001, 3002])
         #expect(!servers.contains { $0.name == "ControlCenter" || $0.name == "Spotify" })
     }
 
     @Test func minecraftOnJavaIsNotADevServer() {
-        let servers = Sampler.servers(from: Sampler.parseListeners(Self.lsof))
+        let servers = Sampler.servers(from: Self.listeners)
         let paper = servers.first { $0.pid == 45199 }
         #expect(paper?.name == "Minecraft")
         #expect(paper?.isDev == false)

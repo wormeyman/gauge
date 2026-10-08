@@ -5,7 +5,7 @@ struct MenuBarLabel: View {
     var monitor: Monitor
 
     var body: some View {
-        let cpu = monitor.cpuNow.map { String(format: "%.0f%%", $0) } ?? "–"
+        let cpu = monitor.cpuNow.map { "\($0)%" } ?? "–"
         Text("\(Image(systemName: "gauge.with.needle")) \(cpu)")
             .monospacedDigit()
             .accessibilityLabel("Gauge, CPU \(cpu)")

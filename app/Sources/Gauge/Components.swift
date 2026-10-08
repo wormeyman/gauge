@@ -1,27 +1,131 @@
 import SwiftUI
 
-/// A 0–100 tick scale with a filled bar up to the reading. The ticks are drawn once; the fill is a
-/// plain shape so width changes animate on the GPU instead of redrawing a canvas every frame.
-/// Only the fill glides to a new reading, so the tick canvas isn't part of the animation.
+/// A 0–100 tick scale with a filled bar up to the reading. The ticks are drawn once; only the fill
+/// glides to a new reading.
 struct Ruler: View {
     var fraction: Double
     var hot = false
     var tint: Color = Theme.ink
-    var glide: Animation? = .smooth(duration: 0.45)
+    /// Glides to a new reading (a 0.45 s spring) instead of jumping.
+    var glides = true
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             RulerTicks()
-            Rectangle()
-                .fill(hot ? Theme.signal : tint)
-                .frame(height: 3)
-                .scaleEffect(x: min(1, max(0, fraction)), anchor: .leading)
-                .animation(glide, value: fraction)
-                .padding(.top, 2)
+            Group {
+                if Snapshot.folder == nil {
+                    RulerFill(fraction: min(1, max(0, fraction)), color: hot ? Theme.signal : tint, glides: glides)
+                        .allowsHitTesting(false)
+                } else {
+                    // ImageRenderer can't draw AppKit views, so snapshots use a plain shape.
+                    Rectangle()
+                        .fill(hot ? Theme.signal : tint)
+                        .scaleEffect(x: min(1, max(0, fraction)), anchor: .leading)
+                }
+            }
+            .frame(height: 3)
+            .padding(.top, 2)
         }
         .frame(height: 14)
         .accessibilityHidden(true)
     }
+}
+
+/// The ruler's fill as a Core Animation layer. Core Animation runs the glide in the window server,
+/// so it costs Gauge nothing per frame; the same glide as a SwiftUI animation re-rendered the window
+/// on every display frame, which was the largest part of Gauge's CPU use.
+private struct RulerFill: NSViewRepresentable {
+    var fraction: Double
+    var color: Color
+    var glides: Bool
+
+    func makeNSView(context: Context) -> FillView { FillView() }
+
+    func updateNSView(_ view: FillView, context: Context) {
+        view.update(fraction: fraction, color: NSColor(color).cgColor,
+                    animated: glides && !context.transaction.disablesAnimations)
+    }
+
+    final class FillView: NSView {
+        private let fill = CALayer()
+        private var fraction: Double?
+
+        override init(frame: NSRect) {
+            super.init(frame: frame)
+            wantsLayer = true
+            fill.anchorPoint = CGPoint(x: 0, y: 0.5)
+            fill.actions = ["bounds": NSNull(), "position": NSNull(), "transform": NSNull(), "backgroundColor": NSNull()]
+            layer?.addSublayer(fill)
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func layout() {
+            super.layout()
+            fill.bounds = CGRect(origin: .zero, size: bounds.size)
+            fill.position = CGPoint(x: 0, y: bounds.midY)
+        }
+
+        func update(fraction: Double, color: CGColor?, animated: Bool) {
+            fill.backgroundColor = color
+            guard fraction != self.fraction else { return }
+            defer { self.fraction = fraction }
+            let from = (fill.presentation() ?? fill).value(forKeyPath: "transform.scale.x") as? Double
+            fill.setValue(fraction, forKeyPath: "transform.scale.x")
+            // The first value appears in place, like a SwiftUI view's first render.
+            guard animated, self.fraction != nil, let from else { return }
+            // Matches SwiftUI's .smooth(duration: 0.45): a spring with no bounce.
+            let glide = CASpringAnimation(perceptualDuration: 0.45, bounce: 0)
+            glide.keyPath = "transform.scale.x"
+            glide.fromValue = from
+            glide.toValue = fraction
+            glide.duration = glide.settlingDuration
+            fill.add(glide, forKey: "glide")
+        }
+    }
+}
+
+/// Hosts content in its own NSHostingView, filling the space it's offered. A readout that animates on
+/// every reading then redraws only itself for each animation frame, instead of the whole window, and its
+/// changes don't make the surrounding layout re-measure. Content doesn't inherit the environment, so it
+/// sets its own fonts and colours (the default foreground is Theme.ink).
+struct Isolated<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        if Snapshot.folder == nil {
+            IsolatedHost(content: content.foregroundStyle(Theme.ink))
+                .accessibilityHidden(true)  // the enclosing control carries the label
+        } else {
+            // ImageRenderer can't draw AppKit views, so snapshots render the content inline.
+            content
+        }
+    }
+}
+
+private struct IsolatedHost<Content: View>: NSViewRepresentable {
+    var content: Content
+
+    func makeNSView(context: Context) -> PassthroughHostingView<Content> {
+        let view = PassthroughHostingView(rootView: content)
+        view.sizingOptions = []  // takes the size SwiftUI proposes rather than reporting its own
+        return view
+    }
+
+    func updateNSView(_ view: PassthroughHostingView<Content>, context: Context) {
+        view.rootView = content
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: PassthroughHostingView<Content>, context: Context) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions()
+    }
+}
+
+/// Clicks and hovers go to the SwiftUI control underneath.
+private final class PassthroughHostingView<Content: View>: NSHostingView<Content> {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 /// The ruler's track and ticks. A separate view with no inputs, so a new reading doesn't redraw it.
@@ -168,7 +272,8 @@ struct Readings: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            ForEach(stats, id: \.self) { stat in
+            // Rows keyed by position: keying by the whole Stat replaced every row whenever its value changed.
+            ForEach(Array(stats.enumerated()), id: \.offset) { _, stat in
                 HStack {
                     Text(stat.label).foregroundStyle(Theme.muted)
                     Spacer(minLength: 8)

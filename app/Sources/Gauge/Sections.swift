@@ -55,20 +55,22 @@ struct Channel: View {
                 .frame(height: 18)
                 Text(vital.caption).font(.system(size: 12)).foregroundStyle(Theme.muted).lineLimit(1).padding(.top, 2)
                 GeometryReader { geo in
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(vital.value)
-                            .font(Theme.mono(min(56, max(28, geo.size.width * 0.235)), .light))
-                            .tracking(-1.5)
-                            .monospacedDigit()
-                            .contentTransition(.opacity)
-                            // Scoped to the readout: animating the whole channel redrew its trace and
-                            // readings for every frame of every tick, roughly doubling Gauge's CPU use.
-                            .animation(.easeOut(duration: 0.25), value: vital.value)
-                        Text(vital.unit).font(.system(size: 12)).foregroundStyle(Theme.muted)
+                    // Isolated: the cross-fade on every reading redraws only the readout, and a new
+                    // value doesn't make the page re-measure around it.
+                    Isolated {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(vital.value)
+                                .font(Theme.mono(min(56, max(28, geo.size.width * 0.235)), .light))
+                                .tracking(-1.5)
+                                .monospacedDigit()
+                                .contentTransition(.opacity)
+                                .animation(.easeOut(duration: 0.25), value: vital.value)
+                            Text(vital.unit).font(.system(size: 12)).foregroundStyle(Theme.muted)
+                        }
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                     }
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                    .frame(maxHeight: .infinity, alignment: .bottom)
                 }
                 .frame(height: 58)
                 .padding(.top, 8)
@@ -211,7 +213,8 @@ struct BreakdownView: View {
             layout {
                 Donut(slices: item.slices, tint: Theme.tone(item.metric), center: item.center, caption: item.centerCaption)
                 Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 8) {
-                    ForEach(Array(item.slices.enumerated()), id: \.element.id) { index, slice in
+                    // Rows keyed by position, so a new ranking updates rows in place instead of moving them.
+                    ForEach(Array(item.slices.enumerated()), id: \.offset) { index, slice in
                         GridRow {
                             HStack(spacing: 9) {
                                 Rectangle().fill(Donut(slices: item.slices, tint: Theme.tone(item.metric), center: "", caption: "").color(index)).frame(width: 8, height: 8)
