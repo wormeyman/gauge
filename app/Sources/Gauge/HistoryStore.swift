@@ -136,6 +136,22 @@ final class HistoryStore: @unchecked Sendable {
         }
     }
 
+    /// Average CPU per minute in a time range, for working out this Mac's normal. Read-only.
+    func cpuMinutes(since: Date, before: Date, completion: @escaping @MainActor ([(date: Date, cpu: Double)]) -> Void) {
+        let start = Int64(since.timeIntervalSince1970), end = Int64(before.timeIntervalSince1970)
+        queue.async { [self] in
+            var result: [(date: Date, cpu: Double)] = []
+            run("SELECT (t / 60) * 60 AS m, avg(cpu) FROM samples WHERE t >= ? AND t < ? GROUP BY m ORDER BY m") { s in
+                sqlite3_bind_int64(s, 1, start)
+                sqlite3_bind_int64(s, 2, end)
+                while sqlite3_step(s) == SQLITE_ROW {
+                    result.append((Date(timeIntervalSince1970: Double(sqlite3_column_int64(s, 0))), sqlite3_column_double(s, 1)))
+                }
+            }
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
     func prune(keepingDays days: Int) {
         let cutoff = Int64(Date().timeIntervalSince1970) - Int64(days) * 86_400
         queue.async { [self] in

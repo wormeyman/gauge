@@ -156,6 +156,7 @@ final class Monitor {
 
     @ObservationIgnored let store = HistoryStore()
     @ObservationIgnored let sampler = Sampler()
+    @ObservationIgnored let insights = InsightTracker()
     // Bookkeeping no view reads directly, kept out of observation tracking.
     @ObservationIgnored private let queue = DispatchQueue(label: "gauge.sampler", qos: .utility)
     @ObservationIgnored private var timer: Timer?
@@ -287,6 +288,7 @@ final class Monitor {
                                    gpu: r.gpuUtilization ?? 0, diskRead: r.disk.readRate, diskWrite: r.disk.writeRate,
                                    down: r.network.downRate, up: r.network.upRate, battery: r.battery?.percent))
         if recent.count > 300 { recent.removeFirst(recent.count - 300) }
+        insights.ingest(r, recent: recent, store: store)
         if showing || !ready { publish(r) }
     }
 
@@ -300,7 +302,8 @@ final class Monitor {
         update(\.selfUsage, SelfUsage(cpu: selfSamples.map(\.cpu).reduce(0, +) / n, memory: r.selfUsage.memory))
         update(\.vitals, buildVitals(r, cpu: cpu))
         update(\.notices, Notices.build(reading: r, now: Date(), memoryWarningSince: memoryWarningSince, busyApps: busyApps,
-                                         servers: serverList, previous: notices))
+                                         servers: serverList, previous: notices)
+                         + insights.notices(r, recent: recent, now: Date()))
         update(\.breakdowns, buildBreakdowns(r, cpu: cpu))
         update(\.hardware, buildHardware(r))
         update(\.status, Notices.status(vitals: vitals))
@@ -527,8 +530,9 @@ final class Monitor {
         if let device = r.audioDevice { audioRows.append(Stat(label: "Output", value: device)) }
         let accessories = r.accessories.map { Stat(label: $0.name, value: "\($0.percent)%") }
         return [
-            HardwareCard(tone: "Disk", title: "Temperature & fans", rows: [Stat(label: "Sensors", value: "Not available yet")],
-                         note: "Reading temperature sensors needs a privileged helper, which Gauge doesn't have yet."),
+            HardwareCard(tone: "Disk", title: "Temperature & fans", rows: [Stat(label: "Thermal state", value: Insights.thermalLabel(r.thermal)),
+                                Stat(label: "Sensors", value: "Not available yet")],
+                         note: "macOS reports its thermal state. Reading temperature sensors needs a privileged helper, which Gauge doesn't have yet."),
             HardwareCard(tone: "GPU", title: "Audio activity", rows: audioRows,
                          note: r.audioPlaying ? "Audio is playing through this output." : "Nothing is playing."),
             HardwareCard(tone: "CPU", title: "Bluetooth batteries",

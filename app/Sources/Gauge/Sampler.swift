@@ -89,6 +89,8 @@ struct Reading {
     var audioPlaying = false
     var audioDevice: String?
     var accessories: [(name: String, percent: Int)] = []
+    /// macOS's public thermal state. Temperatures themselves need a privileged helper.
+    var thermal: ProcessInfo.ThermalState = .nominal
 }
 
 /// Samples system counters. Not thread-safe: Monitor only uses it from one serial queue.
@@ -152,6 +154,7 @@ final class Sampler: @unchecked Sendable {
         r.audioPlaying = audio.playing
         r.audioDevice = audio.device
         r.accessories = accessories
+        r.thermal = ProcessInfo.processInfo.thermalState
         return r
     }
 
