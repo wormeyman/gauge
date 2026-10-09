@@ -69,6 +69,8 @@ struct StatusBar: View {
                 Text("Gauge \(String(format: "%.1f%%", monitor.selfUsage.cpu)) CPU · \(Fmt.memoryText(monitor.selfUsage.memory))")
                     .help("Gauge's own CPU, averaged over 30 seconds, and memory footprint")
                 Button("Privacy", action: showPrivacy).buttonStyle(.plain).foregroundStyle(Theme.muted)
+                Button(NetworkLog.shared.summary, action: showPrivacy).buttonStyle(.plain).foregroundStyle(Theme.muted)
+                    .help("Network requests Gauge has made since it opened. Click to see them.")
                 Spacer()
                 HStack(spacing: 7) {
                     Circle().fill(monitor.ready ? Theme.ink : Theme.faint).frame(width: 5, height: 5)

@@ -14,7 +14,7 @@ struct GaugeApp: App {
                 .frame(minWidth: 820, minHeight: 600)
                 .preferredColorScheme(.dark)
                 .containerBackground(Theme.bg, for: .window)
-                .task { Snapshot.monitor = monitor; monitor.start() }
+                .task { Snapshot.monitor = monitor; monitor.start(); LocalAPI.shared.attach(monitor) }
         }
         .defaultSize(width: 1280, height: 860)
         .windowToolbarStyle(.unified(showsTitle: false))
@@ -96,6 +96,7 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
             UpdatesSettings(updates: updates)
+            LocalToolsSettings()
             Section("Privacy") {
                 Text("Gauge reads system counters locally. It has no analytics, no account and no sync. Its only network request is the update check above.")
                     .foregroundStyle(.secondary)

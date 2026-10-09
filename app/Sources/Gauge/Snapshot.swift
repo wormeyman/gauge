@@ -3,7 +3,7 @@ import SwiftUI
 /// Development aid: with GAUGE_SNAPSHOT=<folder>, Gauge renders its overview (and optionally a
 /// detail sheet) to PNGs from live data, then quits. Used for progress screenshots.
 /// Also renders the menu bar panel to menubar.png.
-/// Optional: GAUGE_SNAPSHOT_WIDTH=1440, GAUGE_SNAPSHOT_HEIGHT=900, GAUGE_SNAPSHOT_SHEET=CPU (a detail page), GAUGE_SNAPSHOT_DELAY=8.
+/// Optional: GAUGE_SNAPSHOT_WIDTH=1440, GAUGE_SNAPSHOT_HEIGHT=900, GAUGE_SNAPSHOT_SHEET=CPU (a detail page, Privacy or LocalTools), GAUGE_SNAPSHOT_DELAY=8.
 @MainActor
 enum Snapshot {
     static let folder = ProcessInfo.processInfo.environment["GAUGE_SNAPSHOT"]
@@ -45,7 +45,14 @@ enum Snapshot {
                 }
                 save(viewport.frame(width: width, height: height), to: "\(folder)/viewport.png")
             }
-            if let sheet {
+            if let sheet, ["Privacy", "LocalTools"].contains(sheet) {
+                // The privacy sheet, or the Local tools settings section, at their own widths.
+                let panel = Group {
+                    if sheet == "Privacy" { PrivacyDetails().frame(width: 512).padding(24).background(Theme.raise) }
+                    else { LocalToolsSettings.snapshot }
+                }
+                save(panel, to: "\(folder)/detail.png")
+            } else if let sheet {
                 // Detail page for a metric, rendered at the same width as the window.
                 let detail = VStack(spacing: 0) {
                     Group {
