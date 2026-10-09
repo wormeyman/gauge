@@ -16,6 +16,11 @@ enum Snapshot {
         let delay = Double(env["GAUGE_SNAPSHOT_DELAY"] ?? "") ?? 8
         let width = CGFloat(Double(env["GAUGE_SNAPSHOT_WIDTH"] ?? "") ?? 1440)
         let sheet = env["GAUGE_SNAPSHOT_SHEET"]
+        if sheet == "Projects" {
+            // ImageRenderer doesn't run the page's .task, so the developer sections are read ahead of time.
+            DispatchQueue.main.asyncAfter(deadline: .now() + min(2, delay / 2)) { monitor.map { $0.devTools.refresh($0) } }
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(3, delay - 2)) { monitor.map { $0.devTools.refresh($0) } }
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             guard let monitor else { NSApp.terminate(nil); return }
             let gutter: CGFloat = width < 700 ? 20 : 40
@@ -62,7 +67,7 @@ enum Snapshot {
                 let detail = VStack(spacing: 0) {
                     Group {
                         if sheet == "Projects" {
-                            ProjectsPage(monitor: monitor, back: {})
+                            ProjectsPage(monitor: monitor, width: content, back: {})
                         } else {
                             DetailPage(name: sheet, monitor: monitor, width: content, back: {},
                                        previewHover: Double(env["GAUGE_SNAPSHOT_HOVER"] ?? ""))

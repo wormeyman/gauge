@@ -402,9 +402,10 @@ struct SeriesSwatch: View {
     }
 }
 
-/// Projects page: local dev servers.
+/// Projects page: local dev servers, then ports, containers, build caches and local AI models.
 struct ProjectsPage: View {
     var monitor: Monitor
+    var width: CGFloat = 900
     var back: () -> Void
 
     var body: some View {
@@ -426,6 +427,7 @@ struct ProjectsPage: View {
             Text("Local servers listening on TCP ports").font(.system(size: 13)).foregroundStyle(Theme.muted).padding(.top, 4)
             Hairline().padding(.top, 26)
             ProjectsView(monitor: monitor).padding(.top, 18)
+            ProjectsSections(monitor: monitor, width: width).padding(.top, 40)
         }
     }
 }

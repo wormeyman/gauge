@@ -60,6 +60,8 @@ struct DevServer: Identifiable, Hashable {
     var isDev = true
     /// Process start time, so stopping a server never signals a reused PID.
     var started: UInt64 = 0
+    /// Full path of the working folder that `folder` names.
+    var path = ""
     var idle: Bool { cpu < 1 }
 }
 
@@ -501,7 +503,8 @@ final class Sampler: @unchecked Sendable {
         }
         return Sampler.servers(from: listeners).map { server in
             var server = server
-            server.folder = Sampler.workingFolder(server.pid)
+            server.path = Sampler.workingFolder(server.pid)
+            server.folder = (server.path as NSString).lastPathComponent
             server.started = ProcessControl.startTime(server.pid) ?? 0
             server.cpu = processes[server.pid]?.cpu ?? 0
             server.memory = processes[server.pid]?.memory ?? 0
@@ -568,14 +571,14 @@ final class Sampler: @unchecked Sendable {
         return server
     }
 
-    private static func workingFolder(_ pid: Int32) -> String {
+    static func workingFolder(_ pid: Int32) -> String {
         var info = proc_vnodepathinfo()
         let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
         guard proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, size) == size else { return "" }
         let path = withUnsafePointer(to: &info.pvi_cdir.vip_path) {
             $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) { String(cString: $0) }
         }
-        return (path as NSString).lastPathComponent
+        return path
     }
 
     // MARK: Audio and accessories

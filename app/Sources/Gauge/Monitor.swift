@@ -159,6 +159,8 @@ final class Monitor {
     @ObservationIgnored let insights = InsightTracker()
     /// Top apps per history row, plus sleep, wake, launches, quits and thermal changes (Recorder.swift).
     @ObservationIgnored let recorder = Recorder()
+    /// Ports, containers, build caches and local AI models for the Projects page.
+    @ObservationIgnored let devTools = DevTools()
     // Bookkeeping no view reads directly, kept out of observation tracking.
     @ObservationIgnored private let queue = DispatchQueue(label: "gauge.sampler", qos: .utility)
     @ObservationIgnored private var timer: Timer?

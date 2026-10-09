@@ -73,7 +73,7 @@ struct ContentView: View {
             OverviewPage(monitor: monitor, width: width, bars: $bars, export: export,
                          open: { sheet = $0 }, select: select)
         case "Projects":
-            ProjectsPage(monitor: monitor) { select("Overview") }
+            ProjectsPage(monitor: monitor, width: width) { select("Overview") }
         case "Timeline":
             TimelinePage(store: monitor.store, width: width) { select("Overview") }
         default:
