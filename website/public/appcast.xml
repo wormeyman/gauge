@@ -7,6 +7,18 @@
     <language>en</language>
     <!-- Newest release first. release.sh inserts items here. -->
     <item>
+      <title>Gauge 0.4.0</title>
+      <pubDate>Fri, 09 Oct 2026 01:05:31 GMT</pubDate>
+      <sparkle:version>4</sparkle:version>
+      <sparkle:shortVersionString>0.4.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<ul><li>Timeline (⌘9): every 10 seconds Gauge saves which apps were busiest, and notes sleep, wake, apps opening and quitting, and heat. Go back to any moment to see what was running, and follow battery health and disk use over months.</li><li>Worth a look flags an app whose memory keeps growing, CPU that&#x27;s higher than usual for this Mac at this time of day, battery used while the Mac was asleep and what woke it, and an app holding a quarter of your memory.</li><li>Thermal state: Gauge says when macOS is slowing the processor to manage heat.</li><li>Notifications, if you turn them on: a macOS notification when an app holds a lot of memory or pins a core, memory pressure stays high, or the startup disk is almost full. Each is sent at most once an hour.</li><li>Projects shows who holds each dev port and flags servers left running in old projects, lists Docker, OrbStack, Colima and Podman containers, measures build caches with Move to Trash, and estimates how large a local AI model fits in memory.</li><li>The gauge command and an MCP server let Terminal and coding agents read Gauge. They&#x27;re off by default, read-only, and use a socket only your account can open.</li><li>The status bar counts every network request Gauge makes, and the Privacy sheet lists each one.</li><li>A redesigned Settings window, with Open at login and a Local tools pane.</li></ul>]]></description>
+      <enclosure url="https://github.com/byalex33/gauge/releases/download/v0.4.0/Gauge-0.4.0.dmg"
+                 type="application/octet-stream"
+                 sparkle:edSignature="BOrn39eofB0v+Tobx83+TumUwhEP00KNCqtxYRQghTD8TAknANUgcTXQhTEs4d/0In2DmIQzbkgWbGjAAer2Aw=="
+                 length="3297036"/>
+    </item>
+    <item>
       <title>Gauge 0.3.0</title>
       <pubDate>Thu, 08 Oct 2026 16:26:06 GMT</pubDate>
       <sparkle:version>3</sparkle:version>
