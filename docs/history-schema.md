@@ -12,7 +12,7 @@ Nothing uploads, syncs or reads this file except Gauge. You can open it yourself
 sqlite3 -readonly ~/Library/Application\ Support/Gauge/history.sqlite
 ```
 
-Gauge deletes rows older than the retention period you choose in Settings (1, 7, 30 or 90 days). **Clear History** empties every table.
+Gauge deletes rows older than the retention period you choose in Settings (1, 7, 30 or 90 days). The one exception is `daily`, which holds one tiny row a day and is kept for two years so battery health can show a trend over months. **Clear History** empties every table.
 
 ## Tables
 
@@ -45,7 +45,47 @@ CPU time each app used, summed per hour. Gauge groups helper processes under the
 
 Primary key: `(hour, app)`.
 
-> Other Gauge features may add tables to this file. This page lists the tables defined in `app/Sources/Gauge/HistoryStore.swift` at the time of writing; check that file, or run `.schema` in `sqlite3`, for the full set.
+### `moments`
+
+The flight recorder: the five busiest apps by CPU and the five by memory for each `samples` row.
+
+| Column | Type | Meaning |
+| --- | --- | --- |
+| `t` | INTEGER, primary key | Same Unix time as the matching `samples` row |
+| `apps` | TEXT | Comma-separated `id:cpu:memory` items: `id` refers to `app_names`, `cpu` is tenths of a percent of one core, `memory` is megabytes |
+
+### `app_names`
+
+App names referenced from `moments`, stored once.
+
+| Column | Type | Meaning |
+| --- | --- | --- |
+| `id` | INTEGER, primary key | Referenced by `moments.apps` |
+| `name` | TEXT, unique | App name, as the process list shows it |
+
+### `events`
+
+Things that happened, shown as markers on the Timeline.
+
+| Column | Type | Meaning |
+| --- | --- | --- |
+| `t` | INTEGER | Unix time in seconds |
+| `kind` | TEXT | `sleep`, `wake`, `launch`, `quit` or `thermal` |
+| `detail` | TEXT | App name for `launch` and `quit`; `Nominal`, `Fair`, `Serious` or `Critical` for `thermal` |
+
+### `daily`
+
+One row a day for long-term trends. Kept for two years.
+
+| Column | Type | Meaning |
+| --- | --- | --- |
+| `day` | INTEGER, primary key | Unix time of local midnight starting the day |
+| `battery_health` | REAL, nullable | Maximum capacity, percent of design |
+| `battery_cycles` | INTEGER, nullable | Battery cycle count |
+| `disk_used` | REAL, nullable | Startup disk used, bytes |
+| `disk_total` | REAL, nullable | Startup disk size, bytes |
+
+These tables are defined in `app/Sources/Gauge/HistoryStore.swift` and `HistoryStore+Recorder.swift`. Run `.schema` in `sqlite3` to see them exactly.
 
 ## Example queries
 
@@ -85,6 +125,20 @@ SELECT strftime('%Y-%m-%d %H:%M', min(t), 'unixepoch', 'localtime') AS minute,
 FROM samples
 WHERE t >= strftime('%s', 'now') - 7 * 86400
 GROUP BY t / 60 ORDER BY avg(down) DESC LIMIT 1;
+```
+
+What happened in the last day (sleep, wake, apps opening and quitting, thermal changes):
+
+```sql
+SELECT datetime(t, 'unixepoch', 'localtime') AS time, kind, detail
+FROM events WHERE t >= strftime('%s', 'now') - 86400 ORDER BY t;
+```
+
+Battery health over time:
+
+```sql
+SELECT date(day, 'unixepoch', 'localtime') AS day, battery_health, battery_cycles
+FROM daily ORDER BY day;
 ```
 
 Export the last day as CSV:
