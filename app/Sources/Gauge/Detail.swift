@@ -353,7 +353,8 @@ struct DetailPage: View {
         switch name {
         case "CPU":
             return vital.stats + [Stat(label: "Cores", value: "\(monitor.sampler.cores)"),
-                                  Stat(label: "Processes", value: "\(monitor.processCount)")]
+                                  Stat(label: "Processes", value: "\(monitor.processCount)"),
+                                  Stat(label: "Thermal", value: Insights.thermalLabel(r.thermal))]
         case "Memory":
             let m = r.memory
             let pressure = m.pressure >= 4 ? "Critical" : m.pressure >= 2 ? "Elevated" : "Normal"
@@ -372,7 +373,8 @@ struct DetailPage: View {
             return [Stat(label: "Downloading", value: Fmt.rateText(r.network.downRate))] + vital.stats
         case "Battery":
             guard let b = r.battery else { return vital.stats }
-            return [Stat(label: "State", value: vital.caption)] + vital.stats + [Stat(label: "Cycle count", value: b.cycles.map(String.init) ?? "–")]
+            return [Stat(label: "State", value: vital.caption)] + vital.stats + [Stat(label: "Cycle count", value: b.cycles.map(String.init) ?? "–"),
+                                                                       Insights.sleepStat(monitor.insights.sleep)]
         default:
             return vital.stats
         }
