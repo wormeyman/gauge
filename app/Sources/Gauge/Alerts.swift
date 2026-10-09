@@ -75,6 +75,13 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// Whether macOS lets Gauge show notifications. Nil until checked.
     private(set) var status: UNAuthorizationStatus?
     @ObservationIgnored private var schedule = AlertSchedule()
+    /// What happened to the last test notification, for Settings.
+    private(set) var testResult: TestResult?
+
+    enum TestResult: Equatable {
+        case sent(Date)
+        case failed(String)
+    }
 
     /// The notification center needs an app bundle; `swift run` and tests don't have one.
     private var center: UNUserNotificationCenter? {
@@ -115,7 +122,14 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         content.title = "Notifications are on"
         content.body = "Gauge will tell you when an app holds a lot of memory or something else needs a look."
         content.userInfo = ["target": "Overview"]
-        center.add(UNNotificationRequest(identifier: "test", content: content, trigger: nil))
+        Task {
+            do {
+                try await center.add(UNNotificationRequest(identifier: "test", content: content, trigger: nil))
+                testResult = .sent(Date())
+            } catch {
+                testResult = .failed(error.localizedDescription)
+            }
+        }
     }
 
     func consider(_ notices: [Notice], now: Date) {

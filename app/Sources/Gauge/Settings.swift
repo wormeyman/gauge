@@ -342,12 +342,14 @@ private struct NotificationsPane: View {
             kind(.busyApp, $busyApp)
             kind(.diskLow, $diskLow)
 
-            HStack(spacing: 14) {
+            HStack(alignment: .top, spacing: 14) {
                 Button("Send a Test Notification") { notifier.sendTest() }
                     .buttonStyle(QuietButtonStyle())
                     .disabled(!enabled || blocked)
-                Text("Check that notifications reach you, and see how they look.")
-                    .font(.system(size: 11.5)).foregroundStyle(Theme.muted)
+                testNote
+                    .font(.system(size: 11.5))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 1)
                 Spacer(minLength: 0)
             }
             .padding(.top, 18)
@@ -365,6 +367,21 @@ private struct NotificationsPane: View {
             Toggle(row: kind.title, isOn: isOn).toggleStyle(InstrumentSwitch()).disabled(!enabled)
         }
         .opacity(enabled ? 1 : 0.55)
+    }
+
+    @ViewBuilder private var testNote: some View {
+        switch notifier.testResult {
+        case .sent(let date):
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Sent at \(date.formatted(date: .omitted, time: .shortened)).").foregroundStyle(Theme.ink)
+                Text("No banner? A Focus such as Do Not Disturb holds them back. It's waiting in Notification Centre.")
+                    .foregroundStyle(Theme.muted)
+            }
+        case .failed(let message):
+            Text("macOS didn't accept it: \(message)").foregroundStyle(Theme.signal)
+        case nil:
+            Text("Check that notifications reach you, and see how they look.").foregroundStyle(Theme.muted)
+        }
     }
 
     private var permissionText: String {
