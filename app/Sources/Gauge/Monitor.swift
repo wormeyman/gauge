@@ -156,6 +156,8 @@ final class Monitor {
 
     @ObservationIgnored let store = HistoryStore()
     @ObservationIgnored let sampler = Sampler()
+    /// Ports, containers, build caches and local AI models for the Projects page.
+    @ObservationIgnored let devTools = DevTools()
     // Bookkeeping no view reads directly, kept out of observation tracking.
     @ObservationIgnored private let queue = DispatchQueue(label: "gauge.sampler", qos: .utility)
     @ObservationIgnored private var timer: Timer?
