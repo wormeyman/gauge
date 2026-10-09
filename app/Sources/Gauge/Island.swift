@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Floating category navigation, centred above the status bar. ⌘1–⌘8 select tabs.
+/// Floating category navigation, centred above the status bar. ⌘1–⌘9 select tabs.
 struct Island: View {
     var selection: String
     var select: (String) -> Void
@@ -16,6 +16,7 @@ struct Island: View {
         case "GPU": "square.stack.3d.up"
         case "Battery": "battery.75percent"
         case "Projects": "folder"
+        case "Timeline": "clock.arrow.trianglehead.counterclockwise.rotate.90"
         default: "square.grid.2x2"
         }
     }

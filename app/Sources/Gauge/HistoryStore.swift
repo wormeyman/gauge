@@ -26,7 +26,8 @@ final class HistoryStore: @unchecked Sendable {
     private var db: OpaquePointer?
     /// The insert runs every 10 seconds, so its statement is prepared once.
     private var insertStatement: OpaquePointer?
-    private let queue = DispatchQueue(label: "gauge.history")
+    /// Every statement runs on this queue. Internal so the flight recorder's queries (HistoryStore+Recorder.swift) can use it.
+    let queue = DispatchQueue(label: "gauge.history")
 
     /// Opens (or creates) the history file. Tests pass a temporary file.
     init(file: URL = HistoryStore.file) {
@@ -47,6 +48,7 @@ final class HistoryStore: @unchecked Sendable {
                 CREATE TABLE IF NOT EXISTS app_cpu (
                     hour INTEGER, app TEXT, seconds REAL, PRIMARY KEY (hour, app));
                 """)
+            createRecorderTables()
         }
     }
 
@@ -141,13 +143,14 @@ final class HistoryStore: @unchecked Sendable {
         queue.async { [self] in
             run("DELETE FROM samples WHERE t < ?") { s in sqlite3_bind_int64(s, 1, cutoff); _ = sqlite3_step(s) }
             run("DELETE FROM app_cpu WHERE hour < ?") { s in sqlite3_bind_int64(s, 1, cutoff / 3600); _ = sqlite3_step(s) }
+            pruneRecorder(before: cutoff)
         }
     }
 
     /// Empties the history tables when the user asks to clear history.
     func clear(completion: @escaping @MainActor () -> Void) {
         queue.async { [self] in
-            exec("DELETE FROM samples; DELETE FROM app_cpu; VACUUM;")
+            exec("DELETE FROM samples; DELETE FROM app_cpu; \(Self.recorderTables.map { "DELETE FROM \($0);" }.joined()) VACUUM;")
             DispatchQueue.main.async { completion() }
         }
     }
@@ -173,14 +176,14 @@ final class HistoryStore: @unchecked Sendable {
         }
     }
 
-    // MARK: SQLite helpers (call on `queue`)
+    // MARK: SQLite helpers (call on `queue`; internal for HistoryStore+Recorder.swift)
 
-    private func exec(_ sql: String) {
+    func exec(_ sql: String) {
         guard let db else { return }
         sqlite3_exec(db, sql, nil, nil, nil)
     }
 
-    private func run(_ sql: String, _ body: (OpaquePointer) -> Void) {
+    func run(_ sql: String, _ body: (OpaquePointer) -> Void) {
         guard let db else { return }
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else { return }
