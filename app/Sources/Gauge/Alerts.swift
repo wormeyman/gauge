@@ -121,10 +121,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         let content = UNMutableNotificationContent()
         content.title = "Notifications are on"
         content.body = "Gauge will tell you when an app holds a lot of memory or something else needs a look."
-        content.userInfo = ["target": "Overview"]
+        content.userInfo = ["target": "Overview", "test": true]
         Task {
             do {
-                try await center.add(UNNotificationRequest(identifier: "test", content: content, trigger: nil))
+                try await post(content, key: "test", to: center)
                 testResult = .sent(Date())
             } catch {
                 testResult = .failed(error.localizedDescription)
@@ -141,15 +141,28 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             content.body = notice.body
             content.threadIdentifier = notice.tag
             content.userInfo = ["target": notice.target]
-            center.add(UNNotificationRequest(identifier: notice.id, content: content, trigger: nil))
+            Task { try? await post(content, key: notice.id, to: center) }
         }
+    }
+
+    /// Identifiers of the last notification posted for each alert or test.
+    @ObservationIgnored private var posted: [String: String] = [:]
+
+    /// Posts under a new identifier each time: macOS treats a request that reuses a delivered
+    /// notification's identifier as a quiet update and shows no banner. The previous notification for
+    /// the same alert is removed so Notification Centre keeps one of each.
+    private func post(_ content: UNNotificationContent, key: String, to center: UNUserNotificationCenter) async throws {
+        if let previous = posted[key] { center.removeDeliveredNotifications(withIdentifiers: [previous]) }
+        let id = "\(key) \(UUID().uuidString)"
+        posted[key] = id
+        try await center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
     }
 
     // While Gauge is in front its own notices are on screen, so only file the notification.
     // The test from Settings is always sent with Gauge in front, so it shows as a banner.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification)
         async -> UNNotificationPresentationOptions {
-        notification.request.identifier == "test" ? [.banner, .list] : [.list]
+        notification.request.content.userInfo["test"] as? Bool == true ? [.banner, .list] : [.list]
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
