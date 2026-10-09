@@ -2,7 +2,45 @@ import AppKit
 import Observation
 import UserNotifications
 
-/// Decides which notices become macOS notifications. A notice qualifies once it is hot and has held
+/// The notices that can become macOS notifications, each turned on or off in Settings.
+enum AlertKind: String, CaseIterable, Identifiable {
+    case heavyApp, memoryPressure, busyApp, diskLow
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .heavyApp: "An app holds a quarter of memory"
+        case .memoryPressure: "Memory pressure stays elevated"
+        case .busyApp: "An app pins a CPU core"
+        case .diskLow: "The startup disk is almost full"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .heavyApp: "One app's footprint reaches 25% of this Mac's memory for 30 seconds."
+        case .memoryPressure: "macOS is compressing memory to keep up, for 30 seconds or more."
+        case .busyApp: "One app uses more than 90% of a core for 30 seconds."
+        case .diskLow: "Less than 10% of the startup disk is free."
+        }
+    }
+
+    /// The metric whose colour marks this kind in Settings.
+    var metric: String {
+        switch self {
+        case .heavyApp, .memoryPressure: "Memory"
+        case .busyApp: "CPU"
+        case .diskLow: "Disk"
+        }
+    }
+
+    var defaultsKey: String { "notify.\(rawValue)" }
+
+    /// On unless turned off in Settings.
+    var isOn: Bool { UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true }
+}
+
+/// Decides which notices become macOS notifications. A notice qualifies once it is an alert and has held
 /// for 30 seconds; it is sent once while it lasts, and not again for an hour after it was last sent.
 struct AlertSchedule {
     static let cooldown: TimeInterval = 3600
@@ -12,7 +50,7 @@ struct AlertSchedule {
     private var active: Set<String> = []
 
     mutating func due(_ notices: [Notice], now: Date) -> [Notice] {
-        let ready = notices.filter { $0.hot && Notices.sustained($0.since, now: now) }
+        let ready = notices.filter { $0.alert != nil && Notices.sustained($0.since, now: now) }
         defer { active = Set(ready.map(\.id)) }
         var list: [Notice] = []
         for notice in ready where !active.contains(notice.id) {
@@ -67,9 +105,23 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    /// Whether notifications can be sent from this build at all.
+    var isAvailable: Bool { center != nil }
+
+    /// Posts a sample so the user can see what Gauge's notifications look like.
+    func sendTest() {
+        guard let center else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "Notifications are on"
+        content.body = "Gauge will tell you when an app holds a lot of memory or something else needs a look."
+        content.userInfo = ["target": "Overview"]
+        center.add(UNNotificationRequest(identifier: "test", content: content, trigger: nil))
+    }
+
     func consider(_ notices: [Notice], now: Date) {
         guard enabled, let center else { return }
-        for notice in schedule.due(notices, now: now) {
+        let wanted = notices.filter { $0.alert?.isOn == true }
+        for notice in schedule.due(wanted, now: now) {
             let content = UNMutableNotificationContent()
             content.title = notice.title
             content.body = notice.body
@@ -80,9 +132,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     }
 
     // While Gauge is in front its own notices are on screen, so only file the notification.
+    // The test from Settings is always sent with Gauge in front, so it shows as a banner.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification)
         async -> UNNotificationPresentationOptions {
-        [.list]
+        notification.request.identifier == "test" ? [.banner, .list] : [.list]
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {

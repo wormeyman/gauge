@@ -5,8 +5,8 @@ import Testing
 @Suite struct AlertScheduleTests {
     let start = Date(timeIntervalSince1970: 1_800_000_000)
 
-    func notice(_ title: String, hot: Bool = true, since: Date) -> Notice {
-        Notice(tag: "Memory", title: title, body: "", hot: hot, since: since, target: "Memory")
+    func notice(_ title: String, alert: AlertKind? = .heavyApp, since: Date) -> Notice {
+        Notice(tag: "Memory", title: title, body: "", hot: alert != nil, since: since, target: "Memory", alert: alert)
     }
 
     @Test func waitsUntilANoticeHasHeld() {
@@ -18,7 +18,7 @@ import Testing
 
     @Test func quietNoticesAreNeverSent() {
         var schedule = AlertSchedule()
-        let servers = notice("A dev server is running", hot: false, since: start)
+        let servers = notice("A dev server is running", alert: nil, since: start)
         #expect(schedule.due([servers], now: start.addingTimeInterval(600)).isEmpty)
     }
 

@@ -31,25 +31,25 @@ enum Notices {
             let users = top.map { "\($0.name), \(Fmt.memoryText($0.memory))" }.joined(separator: ", and ")
             list.append(Notice(tag: "Memory", title: "Memory pressure is elevated",
                                body: users.isEmpty ? "macOS is compressing memory to keep up." : "The biggest users are \(users).",
-                               hot: true, since: since, target: "Memory"))
+                               hot: true, since: since, target: "Memory", alert: .memoryPressure))
         }
         for (name, since) in busyApps.sorted(by: { $0.key < $1.key }) where sustained(since, now: now) {
             let cpu = r.apps.first { $0.name == name }?.cpu ?? 0
             list.append(Notice(tag: "CPU", title: "\(name) is using a lot of CPU",
                                body: "\(Fmt.percent(cpu)) of one core for the last \(max(1, Int(now.timeIntervalSince(since) / 60))) min.",
-                               hot: true, since: since, target: "CPU"))
+                               hot: true, since: since, target: "CPU", alert: .busyApp))
         }
         for (name, since) in heavyApps.sorted(by: { $0.key < $1.key }) where sustained(since, now: now) {
             let memory = r.apps.first { $0.name == name }?.memory ?? 0
             let share = r.memory.total > 0 ? memory / r.memory.total * 100 : 0
             list.append(Notice(tag: "Memory", title: "\(name) is using a lot of memory",
                                body: "\(Fmt.memoryText(memory)), \(Fmt.percent(share)) of this Mac's memory, for the last \(max(1, Int(now.timeIntervalSince(since) / 60))) min.",
-                               hot: true, since: since, target: "Memory"))
+                               hot: true, since: since, target: "Memory", alert: .heavyApp))
         }
         if diskLow(r.disk) {
             list.append(Notice(tag: "Disk", title: "Your startup disk is almost full",
                                body: "\(Fmt.storageText(r.disk.available)) free of \(Fmt.storageText(r.disk.total)).",
-                               hot: true, since: previous.first { $0.tag == "Disk" }?.since ?? r.date, target: "Disk"))
+                               hot: true, since: previous.first { $0.tag == "Disk" }?.since ?? r.date, target: "Disk", alert: .diskLow))
         }
         let servers = allServers.filter(\.isDev)
         if !servers.isEmpty {

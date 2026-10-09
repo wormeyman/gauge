@@ -70,6 +70,7 @@ import Testing
         #expect(notice?.body == "6.00 GB, 38% of this Mac's memory, for the last 2 min.")
         #expect(notice?.tag == "Memory")
         #expect(notice?.hot == true)
+        #expect(notice?.alert == .heavyApp)
     }
 
     @Test func lowDiskNoticeKeepsItsStartTime() {
@@ -92,6 +93,7 @@ import Testing
         #expect(notice?.title == "3 dev servers are running")
         #expect(notice?.body == "Node.js on 3000 and 3001; Python on 8000. Together they use 3.00 GB.")
         #expect(notice?.hot == false)
+        #expect(notice?.alert == nil)
     }
 
     @Test func idleWordingAndSingular() {

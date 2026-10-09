@@ -50,28 +50,3 @@ struct CheckForUpdatesCommand: View {
             .disabled(!updates.canCheck)
     }
 }
-
-/// Settings section for updates.
-struct UpdatesSettings: View {
-    @ObservedObject var updates: Updates
-
-    var body: some View {
-        Section {
-            Toggle("Check for updates automatically", isOn: Binding(get: { updates.automaticallyChecks },
-                                                                     set: { updates.automaticallyChecks = $0 }))
-                .disabled(!updates.isAvailable)
-            LabeledContent("Version", value: updates.version)
-            HStack {
-                Text(updates.lastChecked.map { "Last checked \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "Not checked yet")
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Check Now") { updates.checkNow() }.disabled(!updates.canCheck)
-            }
-        } header: {
-            Text("Updates")
-        } footer: {
-            Text("Checking downloads a small feed from gauge.alex.codes. Gauge sends no information about your Mac, and every update is signed and verified before it installs.")
-                .foregroundStyle(.secondary)
-        }
-    }
-}

@@ -27,6 +27,8 @@ struct Notice: Identifiable {
     var hot: Bool
     var since: Date
     var target: String
+    /// Set on notices that can be sent as macOS notifications.
+    var alert: AlertKind?
 }
 
 struct Slice: Identifiable {
