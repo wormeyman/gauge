@@ -27,9 +27,9 @@ your real history.
 ```bash
 # 1. Write release-notes/<version>.md (one "- " bullet per line)
 # 2. Build the DMG, sign the update and add it to website/public/appcast.xml
-./release.sh 0.3.0
+./release.sh 0.4.0
 # 3. Publish: GitHub release with the DMG, then commit and push the appcast (Vercel deploys it)
-./release.sh 0.3.0 --publish
+./release.sh 0.4.0 --publish
 ```
 
 - The version and build number live in `VERSION.env`. Sparkle compares the build number, so every release increments it.
@@ -50,6 +50,10 @@ Gauge samples public macOS counters every 2 seconds, with no administrator acces
 | Battery | IOKit power sources and `AppleSmartBattery` |
 | Apps and processes | `libproc` (your own processes; other users' need admin access) |
 | Dev servers | `proc_pidinfo` listening TCP sockets of Node, Python, Ruby and similar processes |
+| Thermal state | `ProcessInfo.thermalState` |
+| Battery used while asleep, wake reasons | `pmset -g log` |
+| Containers | `docker stats` against the runtime's local socket |
+| Build caches, local AI models | folder sizes on disk |
 | Audio, Bluetooth batteries | CoreAudio, IOKit |
 
 Temperature and fan sensors are not read yet; they need a privileged helper.

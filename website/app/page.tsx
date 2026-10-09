@@ -44,8 +44,8 @@ export default function Home() {
         <section className="hero">
           <div className="hero-grid" aria-hidden="true" />
           <div className="wrap hero-copy">
-            <a className="pill" href="#menu-bar">
-              <span className="pill-dot" />New in 0.3: Gauge lives in your menu bar
+            <a className="pill" href={`${REPO}/releases/tag/v0.4.0`}>
+              <span className="pill-dot" />New in 0.4: see what was running, and when
               <span className="pill-arrow" aria-hidden="true">→</span>
             </a>
             <h1>Know exactly what<br /> your Mac is doing.</h1>
