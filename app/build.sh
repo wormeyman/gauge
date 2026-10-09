@@ -15,8 +15,11 @@ swift build -c release
 APP=build/Gauge.app
 SPARKLE=.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework
 
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 cp .build/release/Gauge "$APP/Contents/MacOS/Gauge"
+# The `gauge` command for local tools and coding agents. It lives in Helpers because Contents/MacOS/gauge
+# and Contents/MacOS/Gauge are the same file on a case-insensitive disk.
+cp .build/release/GaugeCLI "$APP/Contents/Helpers/gauge"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" -c "Set :CFBundleVersion $BUILD" "$APP/Contents/Info.plist"
@@ -36,6 +39,7 @@ if [[ -n "${GAUGE_SIGN_IDENTITY:-}" ]]; then
   sign "$FW/Autoupdate"
   sign "$FW/Updater.app"
   sign "$APP/Contents/Frameworks/Sparkle.framework"
+  sign --identifier org.gauge.monitor.cli "$APP/Contents/Helpers/gauge"
   sign "$APP"
   echo "Signed with $GAUGE_SIGN_IDENTITY"
 else

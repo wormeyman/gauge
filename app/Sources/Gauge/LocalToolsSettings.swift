@@ -1,0 +1,78 @@
+import SwiftUI
+
+/// Settings section for the local API, the `gauge` command and its MCP server.
+struct LocalToolsSettings: View {
+    @AppStorage(LocalAPI.enabledKey) private var enabled = false
+    @State private var problem: String?
+
+    private var command: String { LocalAPI.commandPath }
+    private var claudeCode: String { "claude mcp add gauge -- \"\(command)\" mcp" }
+
+    var body: some View {
+        Section {
+            Toggle("Let local tools read Gauge", isOn: $enabled)
+            if let problem { Text(problem).foregroundStyle(Theme.signal) }
+            LabeledContent("Command") {
+                CopyableLine(text: command)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Add to Claude Code")
+                CopyableLine(text: claudeCode)
+            }
+        } header: {
+            Text("Local tools")
+        } footer: {
+            Text("Lets the gauge command and coding agents on this Mac read vitals, top apps, dev servers, ports, notices and history. It's read-only: they can't stop servers or quit apps. Only your user account can connect, and nothing is opened to the network. Agents only see what's listed here, and the data stays on this Mac unless the agent sends it elsewhere.")
+                .foregroundStyle(.secondary)
+        }
+        .onChange(of: enabled) {
+            LocalAPI.shared.refresh()
+            problem = LocalAPI.shared.problem
+        }
+        .onAppear { problem = enabled ? LocalAPI.shared.problem : nil }
+    }
+}
+
+extension LocalToolsSettings {
+    /// The section's rows stacked plainly, for snapshots: ImageRenderer can't draw a grouped Form.
+    static var snapshot: some View {
+        let settings = LocalToolsSettings()
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("Local tools").font(.system(size: 13, weight: .semibold))
+            HStack {
+                Text("Let local tools read Gauge")
+                Spacer()
+                Text("On").font(Theme.mono(11)).foregroundStyle(Theme.muted)
+            }
+            Hairline()
+            HStack { Text("Command"); Spacer(); Text(settings.command).font(Theme.mono(11)) }
+            Hairline()
+            HStack { Text("Add to Claude Code"); Spacer(); Text(settings.claudeCode).font(Theme.mono(11)) }
+            Text("Lets the gauge command and coding agents on this Mac read vitals, top apps, dev servers, ports, notices and history. It's read-only: they can't stop servers or quit apps. Only your user account can connect, and nothing is opened to the network. Agents only see what's listed here, and the data stays on this Mac unless the agent sends it elsewhere.")
+                .font(.system(size: 12)).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.system(size: 13))
+        .padding(20)
+        .frame(width: 720)
+        .background(Theme.raise)
+    }
+}
+
+/// A monospaced line that can be selected, with a Copy button.
+struct CopyableLine: View {
+    var text: String
+    @State private var copied = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(text).font(Theme.mono(11)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            Button(copied ? "Copied" : "Copy") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+                copied = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+            }
+            .controlSize(.small)
+        }
+    }
+}

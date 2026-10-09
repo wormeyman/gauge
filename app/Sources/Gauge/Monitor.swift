@@ -122,7 +122,7 @@ struct RecentSample {
 
 @MainActor @Observable
 final class Monitor {
-    static let tabs = ["Overview", "CPU", "Memory", "Disk", "Network", "GPU", "Battery", "Projects"]
+    static let tabs = ["Overview", "CPU", "Memory", "Disk", "Network", "GPU", "Battery", "Projects", "Timeline"]
 
     var ready = false
     var vitals: [Vital] = []
@@ -156,6 +156,11 @@ final class Monitor {
 
     @ObservationIgnored let store = HistoryStore()
     @ObservationIgnored let sampler = Sampler()
+    @ObservationIgnored let insights = InsightTracker()
+    /// Top apps per history row, plus sleep, wake, launches, quits and thermal changes (Recorder.swift).
+    @ObservationIgnored let recorder = Recorder()
+    /// Ports, containers, build caches and local AI models for the Projects page.
+    @ObservationIgnored let devTools = DevTools()
     // Bookkeeping no view reads directly, kept out of observation tracking.
     @ObservationIgnored private let queue = DispatchQueue(label: "gauge.sampler", qos: .utility)
     @ObservationIgnored private var timer: Timer?
@@ -209,6 +214,7 @@ final class Monitor {
         guard timer == nil else { return }
         machine = "\(sampler.chip) · \(sampler.cores) cores · \(Int(sampler.memoryTotal / 1_073_741_824)) GB"
         store.prune(keepingDays: Self.retentionDays)
+        recorder.start(store: store)
         let sampler = sampler
         queue.async { _ = sampler.read() }  // prime the counters so the first delta is real
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
@@ -287,6 +293,7 @@ final class Monitor {
                                    gpu: r.gpuUtilization ?? 0, diskRead: r.disk.readRate, diskWrite: r.disk.writeRate,
                                    down: r.network.downRate, up: r.network.upRate, battery: r.battery?.percent))
         if recent.count > 300 { recent.removeFirst(recent.count - 300) }
+        insights.ingest(r, recent: recent, store: store)
         if showing || !ready { publish(r) }
     }
 
@@ -300,7 +307,8 @@ final class Monitor {
         update(\.selfUsage, SelfUsage(cpu: selfSamples.map(\.cpu).reduce(0, +) / n, memory: r.selfUsage.memory))
         update(\.vitals, buildVitals(r, cpu: cpu))
         update(\.notices, Notices.build(reading: r, now: Date(), memoryWarningSince: memoryWarningSince, busyApps: busyApps,
-                                         servers: serverList, previous: notices))
+                                         servers: serverList, previous: notices)
+                         + insights.notices(r, recent: recent, now: Date()))
         update(\.breakdowns, buildBreakdowns(r, cpu: cpu))
         update(\.hardware, buildHardware(r))
         update(\.status, Notices.status(vitals: vitals))
@@ -308,9 +316,18 @@ final class Monitor {
         if ticks % 15 == 1 { reloadHistory() }
     }
 
+    /// The visible notices for the latest reading, built fresh so they're current even while no window
+    /// shows them. The local API reads these, passing servers it just scanned.
+    func currentNotices(servers: [DevServer]) -> [Notice] {
+        guard let latest else { return [] }
+        return Notices.build(reading: latest, now: Date(), memoryWarningSince: memoryWarningSince, busyApps: busyApps,
+                             servers: servers, previous: notices).filter { !dismissed.contains($0.id) }
+    }
+
     private func persist(_ r: Reading) {
         pending.append(r)
         for (app, seconds) in r.cpuSecondsDelta { pendingCPU[app, default: 0] += seconds }
+        recorder.add(r)
         if pending.count >= 5 {
             let n = Double(pending.count)
             func avg(_ f: (Reading) -> Double) -> Double { pending.map(f).reduce(0, +) / n }
@@ -322,8 +339,10 @@ final class Monitor {
                                down: avg { $0.network.downRate }, up: avg { $0.network.upRate },
                                diskRead: avg { $0.disk.readRate }, diskWrite: avg { $0.disk.writeRate },
                                battery: batteries.isEmpty ? nil : batteries.reduce(0, +) / Double(batteries.count)))
+            recorder.saveMoment(at: Int(r.date.timeIntervalSince1970))
             pending.removeAll()
         }
+        if ticks % 300 == 1 { recorder.saveDay(r) }
         if ticks % 30 == 0 {
             store.addCPUTime(pendingCPU, at: r.date)
             pendingCPU.removeAll()
@@ -527,8 +546,9 @@ final class Monitor {
         if let device = r.audioDevice { audioRows.append(Stat(label: "Output", value: device)) }
         let accessories = r.accessories.map { Stat(label: $0.name, value: "\($0.percent)%") }
         return [
-            HardwareCard(tone: "Disk", title: "Temperature & fans", rows: [Stat(label: "Sensors", value: "Not available yet")],
-                         note: "Reading temperature sensors needs a privileged helper, which Gauge doesn't have yet."),
+            HardwareCard(tone: "Disk", title: "Temperature & fans", rows: [Stat(label: "Thermal state", value: Insights.thermalLabel(r.thermal)),
+                                Stat(label: "Sensors", value: "Not available yet")],
+                         note: "macOS reports its thermal state. Reading temperature sensors needs a privileged helper, which Gauge doesn't have yet."),
             HardwareCard(tone: "GPU", title: "Audio activity", rows: audioRows,
                          note: r.audioPlaying ? "Audio is playing through this output." : "Nothing is playing."),
             HardwareCard(tone: "CPU", title: "Bluetooth batteries",
