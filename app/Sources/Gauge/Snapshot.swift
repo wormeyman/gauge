@@ -3,7 +3,9 @@ import SwiftUI
 /// Development aid: with GAUGE_SNAPSHOT=<folder>, Gauge renders its overview (and optionally a
 /// detail sheet) to PNGs from live data, then quits. Used for progress screenshots.
 /// Also renders the menu bar panel to menubar.png.
-/// Optional: GAUGE_SNAPSHOT_WIDTH=1440, GAUGE_SNAPSHOT_HEIGHT=900, GAUGE_SNAPSHOT_SHEET=CPU (a detail page), GAUGE_SNAPSHOT_DELAY=8.
+/// Optional: GAUGE_SNAPSHOT_WIDTH=1440, GAUGE_SNAPSHOT_HEIGHT=900, GAUGE_SNAPSHOT_SHEET=CPU (a detail page, Timeline,
+/// Privacy or LocalTools), GAUGE_SNAPSHOT_DELAY=8.
+/// GAUGE_SNAPSHOT_DEMO=1 fills the Timeline from made-up readings in a temporary store.
 @MainActor
 enum Snapshot {
     static let folder = ProcessInfo.processInfo.environment["GAUGE_SNAPSHOT"]
@@ -15,6 +17,11 @@ enum Snapshot {
         let delay = Double(env["GAUGE_SNAPSHOT_DELAY"] ?? "") ?? 8
         let width = CGFloat(Double(env["GAUGE_SNAPSHOT_WIDTH"] ?? "") ?? 1440)
         let sheet = env["GAUGE_SNAPSHOT_SHEET"]
+        if sheet == "Projects" {
+            // ImageRenderer doesn't run the page's .task, so the developer sections are read ahead of time.
+            DispatchQueue.main.asyncAfter(deadline: .now() + min(2, delay / 2)) { monitor.map { $0.devTools.refresh($0) } }
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(3, delay - 2)) { monitor.map { $0.devTools.refresh($0) } }
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             guard let monitor else { NSApp.terminate(nil); return }
             let gutter: CGFloat = width < 700 ? 20 : 40
@@ -45,12 +52,30 @@ enum Snapshot {
                 }
                 save(viewport.frame(width: width, height: height), to: "\(folder)/viewport.png")
             }
-            if let sheet {
+            if sheet == "Timeline" {
+                // Loads its history first; GAUGE_SNAPSHOT_DEMO=1 uses made-up readings (TimelineDemo.swift).
+                Task {
+                    let timeline = await TimelineSnapshot.page(monitor: monitor, width: content,
+                                                               hover: Double(env["GAUGE_SNAPSHOT_HOVER"] ?? ""))
+                    save(timeline.frame(width: content).padding(.horizontal, gutter).padding(.bottom, 40).frame(width: width),
+                         to: "\(folder)/detail.png")
+                    NSApp.terminate(nil)
+                }
+                return
+            }
+            if let sheet, ["Privacy", "LocalTools"].contains(sheet) {
+                // The privacy sheet, or the Local tools settings section, at their own widths.
+                let panel = Group {
+                    if sheet == "Privacy" { PrivacyDetails().frame(width: 512).padding(24).background(Theme.raise) }
+                    else { LocalToolsSettings.snapshot }
+                }
+                save(panel, to: "\(folder)/detail.png")
+            } else if let sheet {
                 // Detail page for a metric, rendered at the same width as the window.
                 let detail = VStack(spacing: 0) {
                     Group {
                         if sheet == "Projects" {
-                            ProjectsPage(monitor: monitor, back: {})
+                            ProjectsPage(monitor: monitor, width: content, back: {})
                         } else {
                             DetailPage(name: sheet, monitor: monitor, width: content, back: {},
                                        previewHover: Double(env["GAUGE_SNAPSHOT_HOVER"] ?? ""))

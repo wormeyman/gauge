@@ -3,7 +3,7 @@ import SwiftUI
 import UserNotifications
 
 enum SettingsPane: String, CaseIterable, Identifiable {
-    case general = "General", notifications = "Notifications", history = "History", updates = "Updates", privacy = "Privacy"
+    case general = "General", notifications = "Notifications", history = "History", updates = "Updates", localTools = "Local tools", privacy = "Privacy"
     var id: String { rawValue }
 
     var symbol: String {
@@ -12,6 +12,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .notifications: "bell"
         case .history: "clock.arrow.circlepath"
         case .updates: "arrow.down.circle"
+        case .localTools: "terminal"
         case .privacy: "lock"
         }
     }
@@ -34,6 +35,7 @@ struct SettingsView: View {
                     case .notifications: NotificationsPane(notifier: .shared)
                     case .history: HistoryPane(monitor: monitor)
                     case .updates: UpdatesPane(updates: updates)
+                    case .localTools: LocalToolsPane()
                     case .privacy: PrivacyPane()
                     }
                 }
@@ -481,6 +483,40 @@ private struct UpdatesPane: View {
     }
 }
 
+// MARK: Local tools
+
+private struct LocalToolsPane: View {
+    @AppStorage(LocalAPI.enabledKey) private var enabled = false
+    @State private var problem: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            PaneHeader(title: "Local tools", summary: "The gauge command and coding agents, over a socket on this Mac.") {
+                Lamp(text: problem != nil && enabled ? "Problem" : enabled ? "On" : "Off", lit: enabled,
+                     attention: problem != nil && enabled)
+            }
+            Row(title: "Let local tools read Gauge", detail: "Read-only: tools can't stop servers or quit apps.") {
+                Toggle(row: "Let local tools read Gauge", isOn: $enabled).toggleStyle(InstrumentSwitch())
+            }
+            if let problem, enabled { Note(text: problem) }
+            GroupLabel(text: "Command")
+            CopyableLine(text: LocalToolsSettings.command)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 10)
+            Hairline()
+            GroupLabel(text: "Add to Claude Code")
+            CopyableLine(text: LocalToolsSettings.claudeCode)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 10)
+            Hairline()
+            Note(text: LocalToolsSettings.explanation)
+        }
+        .onChange(of: enabled) {
+            LocalAPI.shared.refresh()
+            problem = LocalAPI.shared.problem
+        }
+        .onAppear { problem = enabled ? LocalAPI.shared.problem : nil }
+    }
+}
+
 // MARK: Privacy
 
 private struct PrivacyPane: View {
@@ -489,6 +525,7 @@ private struct PrivacyPane: View {
             PaneHeader(title: "Privacy", summary: "Gauge reads system counters locally. Nothing leaves this Mac.")
             Row(title: "History", detail: "~/Library/Application Support/Gauge") { Lamp(text: "On this Mac", lit: true) }
             Row(title: "Network requests", detail: "The update check, if it's on.") { Lamp(text: "Updates only", lit: true) }
+            Row(title: "Local tools", detail: "A socket only your account can open, if it's on.") { Lamp(text: "No network", lit: false) }
             Row(title: "Analytics and telemetry") { Lamp(text: "None", lit: false) }
             Row(title: "Account and sync") { Lamp(text: "None", lit: false) }
             Row(title: "Administrator access", detail: "Other users' processes and temperature sensors stay unread.") {

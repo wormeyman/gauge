@@ -4,10 +4,12 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @Environment(Monitor.self) private var monitor
     @State private var sheet: SheetKind?
-    /// The island's selected page: "Overview", a metric name, or "Projects".
+    /// The island's selected page: "Overview", a metric name, "Projects" or "Timeline".
     @State private var page = "Overview"
     @State private var width: CGFloat = 1200
     @State private var exporting = false
+    /// Built when an export starts, not on every redraw.
+    @State private var exportDocument: CSVDocument?
     @AppStorage("chartBars") private var bars = false
 
     var body: some View {
@@ -45,9 +47,9 @@ struct ContentView: View {
                 .accessibilityHidden(true)
         }
         .sheet(item: $sheet) { SheetView(kind: $0) }
-        .fileExporter(isPresented: $exporting, document: CSVDocument(text: monitor.csv()),
-                      contentType: .commaSeparatedText, defaultFilename: "Gauge history") { _ in }
-        .onReceive(NotificationCenter.default.publisher(for: .gaugeExport)) { _ in exporting = true }
+        .fileExporter(isPresented: $exporting, document: exportDocument,
+                      contentType: .commaSeparatedText, defaultFilename: "Gauge history") { _ in exportDocument = nil }
+        .onReceive(NotificationCenter.default.publisher(for: .gaugeExport)) { _ in export() }
         // Pages asked for by the menu bar panel or a clicked notification.
         .onChange(of: monitor.requestedPage, initial: true) { _, requested in
             guard let requested else { return }
@@ -74,13 +76,20 @@ struct ContentView: View {
     @ViewBuilder private var current: some View {
         switch page {
         case "Overview":
-            OverviewPage(monitor: monitor, width: width, bars: $bars, export: { exporting = true },
+            OverviewPage(monitor: monitor, width: width, bars: $bars, export: export,
                          open: { sheet = $0 }, select: select)
         case "Projects":
-            ProjectsPage(monitor: monitor) { select("Overview") }
+            ProjectsPage(monitor: monitor, width: width) { select("Overview") }
+        case "Timeline":
+            TimelinePage(store: monitor.store, width: width) { select("Overview") }
         default:
             DetailPage(name: page, monitor: monitor, width: width) { select("Overview") }
         }
+    }
+
+    private func export() {
+        exportDocument = CSVDocument(text: monitor.csv())
+        exporting = true
     }
 
     private func select(_ name: String) {

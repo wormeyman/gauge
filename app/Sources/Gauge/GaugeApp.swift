@@ -14,7 +14,7 @@ struct GaugeApp: App {
                 .frame(minWidth: 820, minHeight: 600)
                 .preferredColorScheme(.dark)
                 .containerBackground(Theme.bg, for: .window)
-                .task { Snapshot.monitor = monitor; Notifier.shared.monitor = monitor; monitor.start() }
+                .task { Snapshot.monitor = monitor; Notifier.shared.monitor = monitor; monitor.start(); LocalAPI.shared.attach(monitor) }
         }
         .defaultSize(width: 1280, height: 860)
         .windowToolbarStyle(.unified(showsTitle: false))

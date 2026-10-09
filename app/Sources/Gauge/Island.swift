@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Floating category navigation, centred above the status bar. ⌘1–⌘8 select tabs.
+/// Floating category navigation, centred above the status bar. ⌘1–⌘9 select tabs.
 struct Island: View {
     var selection: String
     var select: (String) -> Void
@@ -16,6 +16,7 @@ struct Island: View {
         case "GPU": "square.stack.3d.up"
         case "Battery": "battery.75percent"
         case "Projects": "folder"
+        case "Timeline": "clock.arrow.trianglehead.counterclockwise.rotate.90"
         default: "square.grid.2x2"
         }
     }
@@ -69,6 +70,8 @@ struct StatusBar: View {
                 Text("Gauge \(String(format: "%.1f%%", monitor.selfUsage.cpu)) CPU · \(Fmt.memoryText(monitor.selfUsage.memory))")
                     .help("Gauge's own CPU, averaged over 30 seconds, and memory footprint")
                 Button("Privacy", action: showPrivacy).buttonStyle(.plain).foregroundStyle(Theme.muted)
+                Button(NetworkLog.shared.summary, action: showPrivacy).buttonStyle(.plain).foregroundStyle(Theme.muted)
+                    .help("Network requests Gauge has made since it opened. Click to see them.")
                 Spacer()
                 HStack(spacing: 7) {
                     Circle().fill(monitor.ready ? Theme.ink : Theme.faint).frame(width: 5, height: 5)

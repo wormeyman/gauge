@@ -24,7 +24,10 @@ final class HistoryStore: @unchecked Sendable {
     static let file = folder.appendingPathComponent("history.sqlite")
 
     private var db: OpaquePointer?
-    private let queue = DispatchQueue(label: "gauge.history")
+    /// The insert runs every 10 seconds, so its statement is prepared once.
+    private var insertStatement: OpaquePointer?
+    /// Every statement runs on this queue. Internal so the flight recorder's queries (HistoryStore+Recorder.swift) can use it.
+    let queue = DispatchQueue(label: "gauge.history")
 
     /// Opens (or creates) the history file. Tests pass a temporary file.
     init(file: URL = HistoryStore.file) {
@@ -34,18 +37,25 @@ final class HistoryStore: @unchecked Sendable {
                 db = nil
                 return
             }
+            // WAL with synchronous = NORMAL skips an fsync on every write; a power loss can drop the
+            // last few readings but never corrupts the file.
             exec("""
                 PRAGMA journal_mode = WAL;
+                PRAGMA synchronous = NORMAL;
                 CREATE TABLE IF NOT EXISTS samples (
                     t INTEGER PRIMARY KEY, cpu REAL, mem REAL, mem_total REAL, gpu REAL,
                     down REAL, up REAL, disk_read REAL, disk_write REAL, battery REAL);
                 CREATE TABLE IF NOT EXISTS app_cpu (
                     hour INTEGER, app TEXT, seconds REAL, PRIMARY KEY (hour, app));
                 """)
+            createRecorderTables()
         }
     }
 
-    deinit { sqlite3_close(db) }
+    deinit {
+        sqlite3_finalize(insertStatement)
+        sqlite3_close(db)
+    }
 
     struct Row {
         var t: Int
@@ -55,14 +65,18 @@ final class HistoryStore: @unchecked Sendable {
 
     func insert(_ row: Row) {
         queue.async { [self] in
-            run("INSERT OR REPLACE INTO samples VALUES (?,?,?,?,?,?,?,?,?,?)") { s in
-                sqlite3_bind_int64(s, 1, Int64(row.t))
-                for (i, v) in [row.cpu, row.memory, row.memoryTotal, row.gpu, row.down, row.up, row.diskRead, row.diskWrite].enumerated() {
-                    sqlite3_bind_double(s, Int32(i + 2), v)
-                }
-                if let b = row.battery { sqlite3_bind_double(s, 10, b) } else { sqlite3_bind_null(s, 10) }
-                _ = sqlite3_step(s)
+            guard let db else { return }
+            if insertStatement == nil {
+                sqlite3_prepare_v2(db, "INSERT OR REPLACE INTO samples VALUES (?,?,?,?,?,?,?,?,?,?)", -1, &insertStatement, nil)
             }
+            guard let s = insertStatement else { return }
+            sqlite3_bind_int64(s, 1, Int64(row.t))
+            for (i, v) in [row.cpu, row.memory, row.memoryTotal, row.gpu, row.down, row.up, row.diskRead, row.diskWrite].enumerated() {
+                sqlite3_bind_double(s, Int32(i + 2), v)
+            }
+            if let b = row.battery { sqlite3_bind_double(s, 10, b) } else { sqlite3_bind_null(s, 10) }
+            _ = sqlite3_step(s)
+            sqlite3_reset(s)
         }
     }
 
@@ -124,18 +138,35 @@ final class HistoryStore: @unchecked Sendable {
         }
     }
 
+    /// Average CPU per minute in a time range, for working out this Mac's normal. Read-only.
+    func cpuMinutes(since: Date, before: Date, completion: @escaping @MainActor ([(date: Date, cpu: Double)]) -> Void) {
+        let start = Int64(since.timeIntervalSince1970), end = Int64(before.timeIntervalSince1970)
+        queue.async { [self] in
+            var result: [(date: Date, cpu: Double)] = []
+            run("SELECT (t / 60) * 60 AS m, avg(cpu) FROM samples WHERE t >= ? AND t < ? GROUP BY m ORDER BY m") { s in
+                sqlite3_bind_int64(s, 1, start)
+                sqlite3_bind_int64(s, 2, end)
+                while sqlite3_step(s) == SQLITE_ROW {
+                    result.append((Date(timeIntervalSince1970: Double(sqlite3_column_int64(s, 0))), sqlite3_column_double(s, 1)))
+                }
+            }
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
     func prune(keepingDays days: Int) {
         let cutoff = Int64(Date().timeIntervalSince1970) - Int64(days) * 86_400
         queue.async { [self] in
             run("DELETE FROM samples WHERE t < ?") { s in sqlite3_bind_int64(s, 1, cutoff); _ = sqlite3_step(s) }
             run("DELETE FROM app_cpu WHERE hour < ?") { s in sqlite3_bind_int64(s, 1, cutoff / 3600); _ = sqlite3_step(s) }
+            pruneRecorder(before: cutoff)
         }
     }
 
     /// Empties the history tables when the user asks to clear history.
     func clear(completion: @escaping @MainActor () -> Void) {
         queue.async { [self] in
-            exec("DELETE FROM samples; DELETE FROM app_cpu; VACUUM;")
+            exec("DELETE FROM samples; DELETE FROM app_cpu; \(Self.recorderTables.map { "DELETE FROM \($0);" }.joined()) VACUUM;")
             DispatchQueue.main.async { completion() }
         }
     }
@@ -161,14 +192,14 @@ final class HistoryStore: @unchecked Sendable {
         }
     }
 
-    // MARK: SQLite helpers (call on `queue`)
+    // MARK: SQLite helpers (call on `queue`; internal for HistoryStore+Recorder.swift)
 
-    private func exec(_ sql: String) {
+    func exec(_ sql: String) {
         guard let db else { return }
         sqlite3_exec(db, sql, nil, nil, nil)
     }
 
-    private func run(_ sql: String, _ body: (OpaquePointer) -> Void) {
+    func run(_ sql: String, _ body: (OpaquePointer) -> Void) {
         guard let db else { return }
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else { return }

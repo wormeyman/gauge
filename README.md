@@ -42,14 +42,17 @@ Gauge is built like a measuring instrument rather than a dashboard: six vitals s
 - **In the menu bar.** CPU sits in the menu bar, and a click shows all six vitals and the top notice. With it on, closing the window keeps Gauge running; turn it off in Settings.
 - **A page for every metric.** Click a channel for a large chart with ranges from Live to 7 days, plus average, low and peak, full readings and the top apps.
 - **Hover for exact values.** A crosshair follows the pointer and reads out the time and every series at that moment.
-- **Worth a look.** Plain-language notices when something needs attention, such as elevated memory pressure, an app holding a quarter of your memory, an app pinning a core, a nearly full disk, or dev servers left running.
+- **Worth a look.** Plain-language notices when something needs attention, such as elevated memory pressure, an app holding a quarter of your memory, an app pinning a core, a nearly full disk, or dev servers left running. It also flags an app whose memory keeps growing, CPU that's higher than usual for this Mac at this time of day (learned from your own history), and how much battery went while the Mac was asleep and what woke it. If macOS slows the processor to manage heat, Gauge says so.
 - **Notifications, if you want them.** Turn them on in Settings and Gauge sends a macOS notification when an app holds a quarter of your memory or pins a core, memory pressure stays elevated, or the startup disk is almost full. Each is sent once while it lasts and at most once an hour; click one to open its page.
+- **Timeline.** A flight recorder for your Mac. Every 10 seconds Gauge saves which apps were busiest, and it notes sleep, wake, apps opening and quitting, and thermal changes. Scrub back to any moment (⌘9) to see what was running when things slowed down. Battery health and disk use are tracked over months, with a "This week" summary.
 - **Right now.** Ring breakdowns of memory by type, memory by app, CPU by app and the startup disk.
 - **Apps, not processes.** Helper processes are grouped under their app, so "Google Chrome" is one row, not forty. Quit or force quit an app from the process table, or from the top apps on the CPU and Memory pages (Control-click).
 - **Dev-server aware.** Spots Node, Python, Ruby, Bun, Deno and other local servers listening on TCP ports, with the folder each one runs in. Stop a forgotten server from the Projects page; Gauge sends the same signal as Control-C and offers Force stop if it doesn't exit. Game servers, such as Minecraft on Java, are listed but not counted as dev servers.
-- **Shows its own cost.** The status bar shows Gauge's own CPU and memory, so you can see what monitoring costs.
+- **Built for developers.** The Projects page shows who holds port 3000 and the other usual dev ports, and flags a server probably left running in an old project. It also lists Docker, OrbStack, Colima or Podman containers with their CPU and memory, and measures build caches such as DerivedData, `~/.npm` and `node_modules`, with **Move to Trash**. For local AI models from Ollama, LM Studio, llama.cpp or MLX, it shows memory use and estimates how large a model fits right now.
+- **Readable by your tools and agents.** Turn on **Let local tools read Gauge** in Settings and the bundled `gauge` command prints vitals, top apps, dev servers, port owners, notices and history (`gauge port 3000`, `gauge history cpu --minutes 60`, `--json`). `gauge mcp` is a read-only MCP server for coding agents. It's off by default and uses a socket only your account can open.
+- **Shows its own cost.** The status bar shows Gauge's own CPU and memory, so you can see what monitoring costs, and counts every network request Gauge has made this session (normally none).
 - **One signal colour.** Orange is reserved for readings that need attention, so a warning never hides among the metric colours.
-- **Feels native.** Floating navigation island, ⌘1–⌘8 shortcuts, Esc to go back, sortable process table, Settings window, and CSV export.
+- **Feels native.** Floating navigation island, ⌘1–⌘9 shortcuts, Esc to go back, sortable process table, Settings window, and CSV export.
 - **Keeps itself up to date.** Signed updates through Sparkle, only if you allow it.
 
 ## A closer look
@@ -88,7 +91,11 @@ Everything comes from public macOS interfaces. Gauge needs no administrator acce
 | Network download and upload | `sysctl` 64-bit interface counters (Wi-Fi, Ethernet, cellular) |
 | Battery charge, time, power and health | IOKit power sources and `AppleSmartBattery` |
 | Per-app CPU and memory footprint | `libproc` |
-| Local dev servers | `lsof` listening TCP sockets |
+| Local dev servers and port owners | `proc_pidinfo` listening TCP sockets |
+| Thermal state | `ProcessInfo.thermalState` |
+| Battery used while asleep, wake reasons | `pmset -g log` |
+| Containers | `docker stats` against the runtime's local socket |
+| Build caches, local AI models | Folder sizes on disk |
 | Audio output and Bluetooth accessory batteries | CoreAudio, IOKit |
 
 > [!NOTE]
@@ -98,7 +105,10 @@ Everything comes from public macOS interfaces. Gauge needs no administrator acce
 
 - Readings are averaged every **10 seconds** into a SQLite file at `~/Library/Application Support/Gauge/history.sqlite`.
 - Your history is **never uploaded**. Gauge has no analytics, no telemetry, no account and no sync.
-- The **only network request** is the optional update check described below.
+- The flight recorder's app readings and events live in the same file. A small daily row of battery health and disk use is kept for two years so trends can span months.
+- The **only network request** is the optional update check described below. The status bar counts requests, and the Privacy sheet lists each one with its time and URL.
+- The file's format is documented in [`docs/history-schema.md`](docs/history-schema.md), so you can query it yourself with `sqlite3 -readonly`.
+- The `gauge` command and MCP server are off by default. When on, they answer only over a Unix socket that only your account can open; anything an agent reads leaves your Mac only if that agent sends it elsewhere.
 - Choose how long history is kept (1 to 90 days), reveal the file in Finder, or **Clear History** from Settings (⌘,).
 - Export what's on screen as CSV with **File › Export History** (⌘E).
 
@@ -142,7 +152,8 @@ Run the tests (Swift Testing, no Xcode needed) with:
 | :-- | :-- |
 | <kbd>⌘</kbd> <kbd>1</kbd> | Overview |
 | <kbd>⌘</kbd> <kbd>2</kbd>–<kbd>7</kbd> | CPU, Memory, Disk, Network, GPU, Battery |
-| <kbd>⌘</kbd> <kbd>8</kbd> | Projects (dev servers) |
+| <kbd>⌘</kbd> <kbd>8</kbd> | Projects (dev servers, ports, containers, caches, local AI) |
+| <kbd>⌘</kbd> <kbd>9</kbd> | Timeline (what was running, trends) |
 | <kbd>Esc</kbd> | Back to Overview |
 | <kbd>⌘</kbd> <kbd>E</kbd> | Export history as CSV |
 | <kbd>⌘</kbd> <kbd>,</kbd> | Settings: history retention and Clear History |
@@ -160,14 +171,21 @@ gauge/
 │   │   ├── MenuBar.swift     Menu bar extra and its panel
 │   │   ├── HistoryStore.swift  Local SQLite history
 │   │   ├── Detail.swift      Metric pages with interactive Swift Charts
+│   │   ├── Insights.swift    Memory growth, "higher than usual" and sleep drain rules
+│   │   ├── Recorder.swift    Flight recorder: top apps per moment and events
+│   │   ├── Timeline.swift    Timeline page and long-term trends
+│   │   ├── DevTools.swift    Ports, containers, build caches and local AI models
+│   │   ├── LocalAPI.swift    Opt-in Unix socket for the gauge command
 │   │   ├── Sections.swift    Overview sections
 │   │   └── …
-│   ├── Tests/GaugeTests/     Formatting, sampler parsing, notices and history store
+│   ├── Sources/GaugeKit/     Socket protocol and MCP server shared by the app and CLI
+│   ├── Sources/GaugeCLI/     The gauge command (and `gauge mcp`)
+│   ├── Tests/GaugeTests/     Formatting, parsing, notices, insights, recorder, dev tools, MCP
 │   ├── Resources/            Info.plist, AppIcon.svg / .icns
 │   ├── build.sh
 │   └── test.sh
 ├── prototype/index.html      Interactive HTML design prototype (sample data)
-└── docs/                     README images
+└── docs/                     README images and history-schema.md
 ```
 
 The HTML prototype is the design reference. Open [`prototype/index.html`](prototype/index.html) in a browser to explore the layout with sample data.
@@ -183,6 +201,10 @@ The HTML prototype is the design reference. Open [`prototype/index.html`](protot
 - [ ] Temperature and fan sensors via a privileged helper
 - [x] Menu bar extra
 - [x] Tests for formatting, parsing, notices and history
+- [x] Timeline with per-moment app readings and long-term trends
+- [x] Developer tools: ports, containers, build caches, local AI models
+- [x] `gauge` command and MCP server for local tools and agents
+- [ ] Shortcuts actions (App Intents need Xcode's metadata step)
 - [ ] Desktop widgets
 
 ## License

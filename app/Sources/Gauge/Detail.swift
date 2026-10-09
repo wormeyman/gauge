@@ -72,19 +72,21 @@ struct DetailPage: View {
     private var tone: Color { Theme.tone(name) }
     private var vital: Vital? { monitor.vitals.first { $0.name == name } }
 
+    /// The chart's points. Built once per redraw and shared by the summary and the chart.
     private var samples: [ChartSample] {
+        let spec = spec
         if range == .live {
             return monitor.recent.compactMap { s in spec.live(s).map { ChartSample(date: s.date, values: $0) } }
         }
         return stored.compactMap { p in spec.stored(p).map { ChartSample(date: p.date, values: $0) } }
     }
 
-    private var yMax: Double {
+    private func yMax(_ samples: [ChartSample]) -> Double {
         switch spec.kind {
         case .percent: return 100
         case .memory: return max(monitor.latest?.memory.total ?? 1, 1)
         case .rate:
-            let peak = samples.flatMap(\.values).max() ?? 0
+            let peak = samples.lazy.flatMap(\.values).max() ?? 0
             return Self.niceCeiling(max(peak * 1.15, 10_000))
         }
     }
@@ -93,8 +95,9 @@ struct DetailPage: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             if let vital {
-                summary(vital)
-                chartBlock
+                let data = samples
+                summary(vital, data)
+                chartBlock(data)
                 details(vital)
             }
         }
@@ -130,7 +133,7 @@ struct DetailPage: View {
         .padding(.top, 24)
     }
 
-    private func summary(_ vital: Vital) -> some View {
+    private func summary(_ vital: Vital, _ samples: [ChartSample]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
                 Circle().fill(tone).frame(width: 9, height: 9)
@@ -140,7 +143,7 @@ struct DetailPage: View {
             .padding(.top, 22)
             Text(vital.caption).font(.system(size: 13)).foregroundStyle(Theme.muted).padding(.top, 4)
 
-            let stats = rangeStats
+            let stats = rangeStats(samples)
             let layout = width >= 760 ? AnyLayout(HStackLayout(alignment: .bottom, spacing: 48)) : AnyLayout(VStackLayout(alignment: .leading, spacing: 18))
             layout {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -167,7 +170,7 @@ struct DetailPage: View {
     }
 
     /// Average, low and peak of the primary series over the chosen range.
-    private var rangeStats: [Stat] {
+    private func rangeStats(_ samples: [ChartSample]) -> [Stat] {
         let values = samples.map { $0.values.first ?? 0 }
         guard !values.isEmpty else { return [] }
         let avgLabel = spec.series.count > 1 ? "\(spec.series[0].name) average" : "Average"
@@ -179,11 +182,11 @@ struct DetailPage: View {
 
     // MARK: Chart
 
-    private var chartBlock: some View {
-        let data = samples
+    private func chartBlock(_ data: [ChartSample]) -> some View {
+        let spec = spec
         let hovered = selection.flatMap { s in data.min { abs($0.date.timeIntervalSince(s)) < abs($1.date.timeIntervalSince(s)) } }
             ?? previewHover.flatMap { f in data.isEmpty ? nil : data[min(data.count - 1, Int(Double(data.count - 1) * f))] }
-        let max = yMax
+        let max = yMax(data)
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 18) {
                 ForEach(Array(spec.series.enumerated()), id: \.offset) { index, series in
@@ -339,7 +342,7 @@ struct DetailPage: View {
 
     private var topApps: [(String, Double)]? {
         switch name {
-        case "CPU": return monitor.apps.sorted { $0.cpu > $1.cpu }.prefix(8).map { ($0.name, $0.cpu) }
+        case "CPU": return monitor.apps.prefix(8).map { ($0.name, $0.cpu) }  // already sorted by CPU
         case "Memory": return monitor.apps.sorted { $0.memory > $1.memory }.prefix(8).map { ($0.name, $0.memory) }
         default: return nil
         }
@@ -350,7 +353,8 @@ struct DetailPage: View {
         switch name {
         case "CPU":
             return vital.stats + [Stat(label: "Cores", value: "\(monitor.sampler.cores)"),
-                                  Stat(label: "Processes", value: "\(monitor.processCount)")]
+                                  Stat(label: "Processes", value: "\(monitor.processCount)"),
+                                  Stat(label: "Thermal", value: Insights.thermalLabel(r.thermal))]
         case "Memory":
             let m = r.memory
             let pressure = m.pressure >= 4 ? "Critical" : m.pressure >= 2 ? "Elevated" : "Normal"
@@ -369,7 +373,8 @@ struct DetailPage: View {
             return [Stat(label: "Downloading", value: Fmt.rateText(r.network.downRate))] + vital.stats
         case "Battery":
             guard let b = r.battery else { return vital.stats }
-            return [Stat(label: "State", value: vital.caption)] + vital.stats + [Stat(label: "Cycle count", value: b.cycles.map(String.init) ?? "–")]
+            return [Stat(label: "State", value: vital.caption)] + vital.stats + [Stat(label: "Cycle count", value: b.cycles.map(String.init) ?? "–"),
+                                                                       Insights.sleepStat(monitor.insights.sleep)]
         default:
             return vital.stats
         }
@@ -397,9 +402,10 @@ struct SeriesSwatch: View {
     }
 }
 
-/// Projects page: local dev servers.
+/// Projects page: local dev servers, then ports, containers, build caches and local AI models.
 struct ProjectsPage: View {
     var monitor: Monitor
+    var width: CGFloat = 900
     var back: () -> Void
 
     var body: some View {
@@ -421,6 +427,7 @@ struct ProjectsPage: View {
             Text("Local servers listening on TCP ports").font(.system(size: 13)).foregroundStyle(Theme.muted).padding(.top, 4)
             Hairline().padding(.top, 26)
             ProjectsView(monitor: monitor).padding(.top, 18)
+            ProjectsSections(monitor: monitor, width: width).padding(.top, 40)
         }
     }
 }

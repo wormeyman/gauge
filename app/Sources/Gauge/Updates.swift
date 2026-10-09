@@ -6,6 +6,8 @@ import Sparkle
 @MainActor
 final class Updates: ObservableObject {
     private let controller: SPUStandardUpdaterController?
+    /// Sparkle holds its delegate weakly.
+    private let delegate = UpdateRequestLog()
     @Published private(set) var canCheck = false
     private var observation: NSKeyValueObservation?
 
@@ -13,7 +15,7 @@ final class Updates: ObservableObject {
         // Snapshot runs and unbundled debug runs don't start the updater.
         let isApp = Bundle.main.bundleURL.pathExtension == "app"
         let start = isApp && Snapshot.folder == nil
-        controller = start ? SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil) : nil
+        controller = start ? SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: delegate, userDriverDelegate: nil) : nil
         observation = controller?.updater.observe(\.canCheckForUpdates, options: [.initial, .new]) { [weak self] _, change in
             let value = change.newValue ?? false
             Task { @MainActor in self?.canCheck = value }
@@ -39,6 +41,35 @@ final class Updates: ObservableObject {
         let short = info?["CFBundleShortVersionString"] as? String ?? "–"
         let build = info?["CFBundleVersion"] as? String ?? "–"
         return "\(short) (\(build))"
+    }
+}
+
+/// Records the requests Sparkle actually makes in NetworkLog. Scheduling a check isn't a request, and a check
+/// can stop before the feed is fetched, so the feed is counted once it loaded or failed to download.
+final class UpdateRequestLog: NSObject, SPUUpdaterDelegate {
+    func updater(_ updater: SPUUpdater, didFinishLoading appcast: SUAppcast) {
+        let url = updater.feedURL
+        MainActor.assumeIsolated { NetworkLog.shared.record("Update feed", url: url) }
+    }
+
+    func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: (any Error)?) {
+        // SUAppcastError: the feed request was made but didn't complete, such as when offline.
+        guard let error = error as NSError?, error.domain == SUSparkleErrorDomain, error.code == Int(SUError.appcastError.rawValue) else { return }
+        let url = updater.feedURL
+        MainActor.assumeIsolated { NetworkLog.shared.record("Update feed (failed)", url: url) }
+    }
+
+    func updater(_ updater: SPUUpdater, willDownloadUpdate item: SUAppcastItem, with request: NSMutableURLRequest) {
+        let url = request.url
+        MainActor.assumeIsolated { NetworkLog.shared.record("Update download", url: url) }
+    }
+
+    func updater(_ updater: SPUUpdater, shouldDownloadReleaseNotesForUpdate updateItem: SUAppcastItem) -> Bool {
+        // Gauge's feed carries its notes inline; a separate notes link would be one more request.
+        if let url = updateItem.releaseNotesURL {
+            MainActor.assumeIsolated { NetworkLog.shared.record("Release notes", url: url) }
+        }
+        return true
     }
 }
 
