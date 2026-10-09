@@ -3,7 +3,8 @@ import SwiftUI
 /// Development aid: with GAUGE_SNAPSHOT=<folder>, Gauge renders its overview (and optionally a
 /// detail sheet) to PNGs from live data, then quits. Used for progress screenshots.
 /// Also renders the menu bar panel to menubar.png.
-/// Optional: GAUGE_SNAPSHOT_WIDTH=1440, GAUGE_SNAPSHOT_HEIGHT=900, GAUGE_SNAPSHOT_SHEET=CPU (a detail page), GAUGE_SNAPSHOT_DELAY=8.
+/// Optional: GAUGE_SNAPSHOT_WIDTH=1440, GAUGE_SNAPSHOT_HEIGHT=900, GAUGE_SNAPSHOT_SHEET=CPU (a detail page, or Timeline), GAUGE_SNAPSHOT_DELAY=8.
+/// GAUGE_SNAPSHOT_DEMO=1 fills the Timeline from made-up readings in a temporary store.
 @MainActor
 enum Snapshot {
     static let folder = ProcessInfo.processInfo.environment["GAUGE_SNAPSHOT"]
@@ -44,6 +45,17 @@ enum Snapshot {
                         .padding(.bottom, 44)
                 }
                 save(viewport.frame(width: width, height: height), to: "\(folder)/viewport.png")
+            }
+            if sheet == "Timeline" {
+                // Loads its history first; GAUGE_SNAPSHOT_DEMO=1 uses made-up readings (TimelineDemo.swift).
+                Task {
+                    let timeline = await TimelineSnapshot.page(monitor: monitor, width: content,
+                                                               hover: Double(env["GAUGE_SNAPSHOT_HOVER"] ?? ""))
+                    save(timeline.frame(width: content).padding(.horizontal, gutter).padding(.bottom, 40).frame(width: width),
+                         to: "\(folder)/detail.png")
+                    NSApp.terminate(nil)
+                }
+                return
             }
             if let sheet {
                 // Detail page for a metric, rendered at the same width as the window.

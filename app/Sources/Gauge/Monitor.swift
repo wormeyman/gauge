@@ -122,7 +122,7 @@ struct RecentSample {
 
 @MainActor @Observable
 final class Monitor {
-    static let tabs = ["Overview", "CPU", "Memory", "Disk", "Network", "GPU", "Battery", "Projects"]
+    static let tabs = ["Overview", "CPU", "Memory", "Disk", "Network", "GPU", "Battery", "Projects", "Timeline"]
 
     var ready = false
     var vitals: [Vital] = []
@@ -157,6 +157,8 @@ final class Monitor {
     @ObservationIgnored let store = HistoryStore()
     @ObservationIgnored let sampler = Sampler()
     @ObservationIgnored let insights = InsightTracker()
+    /// Top apps per history row, plus sleep, wake, launches, quits and thermal changes (Recorder.swift).
+    @ObservationIgnored let recorder = Recorder()
     // Bookkeeping no view reads directly, kept out of observation tracking.
     @ObservationIgnored private let queue = DispatchQueue(label: "gauge.sampler", qos: .utility)
     @ObservationIgnored private var timer: Timer?
@@ -210,6 +212,7 @@ final class Monitor {
         guard timer == nil else { return }
         machine = "\(sampler.chip) · \(sampler.cores) cores · \(Int(sampler.memoryTotal / 1_073_741_824)) GB"
         store.prune(keepingDays: Self.retentionDays)
+        recorder.start(store: store)
         let sampler = sampler
         queue.async { _ = sampler.read() }  // prime the counters so the first delta is real
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
@@ -314,6 +317,7 @@ final class Monitor {
     private func persist(_ r: Reading) {
         pending.append(r)
         for (app, seconds) in r.cpuSecondsDelta { pendingCPU[app, default: 0] += seconds }
+        recorder.add(r)
         if pending.count >= 5 {
             let n = Double(pending.count)
             func avg(_ f: (Reading) -> Double) -> Double { pending.map(f).reduce(0, +) / n }
@@ -325,8 +329,10 @@ final class Monitor {
                                down: avg { $0.network.downRate }, up: avg { $0.network.upRate },
                                diskRead: avg { $0.disk.readRate }, diskWrite: avg { $0.disk.writeRate },
                                battery: batteries.isEmpty ? nil : batteries.reduce(0, +) / Double(batteries.count)))
+            recorder.saveMoment(at: Int(r.date.timeIntervalSince1970))
             pending.removeAll()
         }
+        if ticks % 300 == 1 { recorder.saveDay(r) }
         if ticks % 30 == 0 {
             store.addCPUTime(pendingCPU, at: r.date)
             pendingCPU.removeAll()

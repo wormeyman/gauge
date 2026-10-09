@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @Environment(Monitor.self) private var monitor
     @State private var sheet: SheetKind?
-    /// The island's selected page: "Overview", a metric name, or "Projects".
+    /// The island's selected page: "Overview", a metric name, "Projects" or "Timeline".
     @State private var page = "Overview"
     @State private var width: CGFloat = 1200
     @State private var exporting = false
@@ -74,6 +74,8 @@ struct ContentView: View {
                          open: { sheet = $0 }, select: select)
         case "Projects":
             ProjectsPage(monitor: monitor) { select("Overview") }
+        case "Timeline":
+            TimelinePage(store: monitor.store, width: width) { select("Overview") }
         default:
             DetailPage(name: page, monitor: monitor, width: width) { select("Overview") }
         }
