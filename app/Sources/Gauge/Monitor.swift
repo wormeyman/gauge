@@ -316,6 +316,14 @@ final class Monitor {
         if ticks % 15 == 1 { reloadHistory() }
     }
 
+    /// The visible notices for the latest reading, built fresh so they're current even while no window
+    /// shows them. The local API reads these, passing servers it just scanned.
+    func currentNotices(servers: [DevServer]) -> [Notice] {
+        guard let latest else { return [] }
+        return Notices.build(reading: latest, now: Date(), memoryWarningSince: memoryWarningSince, busyApps: busyApps,
+                             servers: servers, previous: notices).filter { !dismissed.contains($0.id) }
+    }
+
     private func persist(_ r: Reading) {
         pending.append(r)
         for (app, seconds) in r.cpuSecondsDelta { pendingCPU[app, default: 0] += seconds }
