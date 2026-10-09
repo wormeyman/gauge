@@ -9,6 +9,7 @@ import Testing
         var r = Reading()
         r.date = now
         r.apps = apps
+        r.memory.total = 16 * 1_073_741_824
         r.disk = DiskReading(total: 1_000e9, available: available)
         if let health { r.battery = BatteryReading(percent: 80, charging: false, onAC: false, health: health, cycles: 900) }
         return r
@@ -18,9 +19,10 @@ import Testing
         DevServer(pid: pid, name: name, folder: "site", ports: ports, cpu: cpu, memory: memory, isDev: isDev)
     }
 
-    func build(_ r: Reading, memorySince: Date? = nil, busy: [String: Date] = [:], servers: [DevServer] = [],
-               previous: [Notice] = []) -> [Notice] {
-        Notices.build(reading: r, now: now, memoryWarningSince: memorySince, busyApps: busy, servers: servers, previous: previous)
+    func build(_ r: Reading, memorySince: Date? = nil, busy: [String: Date] = [:], heavy: [String: Date] = [:],
+               servers: [DevServer] = [], previous: [Notice] = []) -> [Notice] {
+        Notices.build(reading: r, now: now, memoryWarningSince: memorySince, busyApps: busy, heavyApps: heavy,
+                      servers: servers, previous: previous)
     }
 
     @Test func nothingToReportOnAQuietMac() {
@@ -50,6 +52,31 @@ import Testing
         let notice = build(reading(apps: apps), memorySince: now).first
         #expect(notice?.tag == "Memory")
         #expect(notice?.body == "The biggest users are Safari, 2.00 GB, and Slack, 1.00 GB.")
+    }
+
+    @Test func appHoldingAQuarterOfMemoryIsHeavy() {
+        let gb = 1_073_741_824.0
+        #expect(!Notices.heavy(AppUsage(name: "Safari", cpu: 0, memory: 3.9 * gb, cpuTime: 0), total: 16 * gb))
+        #expect(Notices.heavy(AppUsage(name: "Safari", cpu: 0, memory: 4 * gb, cpuTime: 0), total: 16 * gb))
+        #expect(!Notices.heavy(AppUsage(name: "macOS", cpu: 0, memory: 8 * gb, cpuTime: 0), total: 16 * gb))
+        #expect(!Notices.heavy(AppUsage(name: "Safari", cpu: 0, memory: 4 * gb, cpuTime: 0), total: 0))
+    }
+
+    @Test func heavyAppNoticeWaitsUntilSustained() {
+        let apps = [AppUsage(name: "Chrome", cpu: 0, memory: 6 * 1_073_741_824, cpuTime: 0)]
+        #expect(build(reading(apps: apps), heavy: ["Chrome": now.addingTimeInterval(-10)]).isEmpty)
+        let notice = build(reading(apps: apps), heavy: ["Chrome": now.addingTimeInterval(-125)]).first
+        #expect(notice?.title == "Chrome is using a lot of memory")
+        #expect(notice?.body == "6.00 GB, 38% of this Mac's memory, for the last 2 min.")
+        #expect(notice?.tag == "Memory")
+        #expect(notice?.hot == true)
+    }
+
+    @Test func lowDiskNoticeKeepsItsStartTime() {
+        let earlier = now.addingTimeInterval(-600)
+        let previous = [Notice(tag: "Disk", title: "", body: "", hot: true, since: earlier, target: "Disk")]
+        #expect(build(reading(available: 50e9)).first?.since == now)
+        #expect(build(reading(available: 50e9), previous: previous).first?.since == earlier)
     }
 
     @Test func lowDiskBelowTenPercentFree() {

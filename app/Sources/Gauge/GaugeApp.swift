@@ -14,7 +14,7 @@ struct GaugeApp: App {
                 .frame(minWidth: 820, minHeight: 600)
                 .preferredColorScheme(.dark)
                 .containerBackground(Theme.bg, for: .window)
-                .task { Snapshot.monitor = monitor; monitor.start() }
+                .task { Snapshot.monitor = monitor; Notifier.shared.monitor = monitor; monitor.start() }
         }
         .defaultSize(width: 1280, height: 860)
         .windowToolbarStyle(.unified(showsTitle: false))
@@ -51,7 +51,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.object(forKey: Self.menuBarKey) as? Bool == false
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
-        MainActor.assumeIsolated { Snapshot.scheduleIfRequested() }
+        MainActor.assumeIsolated {
+            Notifier.shared.activate()
+            Snapshot.scheduleIfRequested()
+        }
     }
 }
 
@@ -95,6 +98,7 @@ struct SettingsView: View {
                 Text("Shows CPU in the menu bar, with all six vitals a click away. While it's on, closing the window keeps Gauge running.")
                     .foregroundStyle(.secondary)
             }
+            NotificationSettings(notifier: .shared)
             UpdatesSettings(updates: updates)
             Section("Privacy") {
                 Text("Gauge reads system counters locally. It has no analytics, no account and no sync. Its only network request is the update check above.")
@@ -116,6 +120,40 @@ struct SettingsView: View {
             }
         } message: {
             Text("This removes every saved reading from this Mac. It can't be undone.")
+        }
+    }
+}
+
+/// Settings section for notifications.
+struct NotificationSettings: View {
+    var notifier: Notifier
+    @AppStorage(Notifier.enabledKey) private var enabled = false
+
+    var body: some View {
+        Section {
+            Toggle("Notify me when something needs a look", isOn: $enabled)
+            if enabled && notifier.status == .denied {
+                HStack {
+                    Text("Notifications for Gauge are turned off in System Settings.").foregroundStyle(Theme.signal)
+                    Spacer()
+                    Button("Open System Settings") {
+                        let id = Bundle.main.bundleIdentifier ?? ""
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=\(id)") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                }
+            }
+        } header: {
+            Text("Notifications")
+        } footer: {
+            Text("Sends a notification when an app holds a quarter of your memory or pins a core, memory pressure stays elevated, or the startup disk is almost full. Each is sent once while it lasts, and at most once an hour.")
+                .foregroundStyle(.secondary)
+        }
+        .onChange(of: enabled) { _, on in if on { notifier.requestPermission() } }
+        .onAppear { notifier.refreshStatus() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            notifier.refreshStatus()
         }
     }
 }

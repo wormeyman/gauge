@@ -42,7 +42,8 @@ Gauge is built like a measuring instrument rather than a dashboard: six vitals s
 - **In the menu bar.** CPU sits in the menu bar, and a click shows all six vitals and the top notice. With it on, closing the window keeps Gauge running; turn it off in Settings.
 - **A page for every metric.** Click a channel for a large chart with ranges from Live to 7 days, plus average, low and peak, full readings and the top apps.
 - **Hover for exact values.** A crosshair follows the pointer and reads out the time and every series at that moment.
-- **Worth a look.** Plain-language notices when something needs attention, such as elevated memory pressure, an app pinning a core, a nearly full disk, or dev servers left running.
+- **Worth a look.** Plain-language notices when something needs attention, such as elevated memory pressure, an app holding a quarter of your memory, an app pinning a core, a nearly full disk, or dev servers left running.
+- **Notifications, if you want them.** Turn them on in Settings and Gauge sends a macOS notification when an app holds a quarter of your memory or pins a core, memory pressure stays elevated, or the startup disk is almost full. Each is sent once while it lasts and at most once an hour; click one to open its page.
 - **Right now.** Ring breakdowns of memory by type, memory by app, CPU by app and the startup disk.
 - **Apps, not processes.** Helper processes are grouped under their app, so "Google Chrome" is one row, not forty. Quit or force quit an app from the process table, or from the top apps on the CPU and Memory pages (Control-click).
 - **Dev-server aware.** Spots Node, Python, Ruby, Bun, Deno and other local servers listening on TCP ports, with the folder each one runs in. Stop a forgotten server from the Projects page; Gauge sends the same signal as Control-C and offers Force stop if it doesn't exit. Game servers, such as Minecraft on Java, are listed but not counted as dev servers.
@@ -155,6 +156,7 @@ gauge/
 │   │   ├── Sampler.swift     Reads system counters (Mach, sysctl, IOKit, libproc, CoreAudio)
 │   │   ├── Monitor.swift     Turns readings into vitals and breakdowns
 │   │   ├── Notices.swift     Rules for "Worth a look" and the status line
+│   │   ├── Alerts.swift      Which notices become macOS notifications, and posting them
 │   │   ├── MenuBar.swift     Menu bar extra and its panel
 │   │   ├── HistoryStore.swift  Local SQLite history
 │   │   ├── Detail.swift      Metric pages with interactive Swift Charts

@@ -3,12 +3,16 @@ import SwiftUI
 /// The menu bar extra: CPU in the menu bar, and a compact instrument panel with all six vitals.
 struct MenuBarLabel: View {
     var monitor: Monitor
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         let cpu = monitor.cpuNow.map { String(format: "%.0f%%", $0) } ?? "–"
         Text("\(Image(systemName: "gauge.with.needle")) \(cpu)")
             .monospacedDigit()
             .accessibilityLabel("Gauge, CPU \(cpu)")
+            // The label lives as long as the menu bar extra, which is what keeps Gauge running with
+            // the window closed, so notifications open the window through it.
+            .onAppear { Notifier.shared.openMain = { openWindow(id: "main") } }
     }
 }
 

@@ -159,6 +159,9 @@ final class Monitor {
     private var serverList: [DevServer] = []
     private var memoryWarningSince: Date?
     private var busyApps: [String: Date] = [:]
+    private var heavyApps: [String: Date] = [:]
+    /// Notices rebuilt every tick, even while no window is visible, for notifications.
+    private var alertNotices: [Notice] = []
     private var cpuHighSince: Date?
     private var gpuPeak = 0.0
     private var selfSamples: [SelfUsage] = []
@@ -230,6 +233,9 @@ final class Monitor {
         selfSamples.append(r.selfUsage)
         if selfSamples.count > 15 { selfSamples.removeFirst(selfSamples.count - 15) }
         updateFlags(r, cpu: cpu)
+        alertNotices = Notices.build(reading: r, now: r.date, memoryWarningSince: memoryWarningSince, busyApps: busyApps,
+                                     heavyApps: heavyApps, servers: serverList, previous: alertNotices)
+        Notifier.shared.consider(alertNotices, now: r.date)
         persist(r)
         if ticks % 1800 == 0 { store.prune(keepingDays: Self.retentionDays) }
         recent.append(RecentSample(date: r.date, cpu: cpu, memory: r.memory.used, memoryTotal: r.memory.total,
@@ -251,7 +257,7 @@ final class Monitor {
         selfUsage = SelfUsage(cpu: selfSamples.map(\.cpu).reduce(0, +) / n, memory: r.selfUsage.memory)
         vitals = buildVitals(r, cpu: cpu)
         notices = Notices.build(reading: r, now: Date(), memoryWarningSince: memoryWarningSince, busyApps: busyApps,
-                                servers: serverList, previous: notices)
+                                heavyApps: heavyApps, servers: serverList, previous: notices)
         breakdowns = buildBreakdowns(r, cpu: cpu)
         hardware = buildHardware(r)
         status = Notices.status(vitals: vitals)
@@ -347,6 +353,9 @@ final class Monitor {
         var busy: [String: Date] = [:]
         for app in r.apps where app.cpu >= 90 && app.name != "macOS" { busy[app.name] = busyApps[app.name] ?? r.date }
         busyApps = busy
+        var heavy: [String: Date] = [:]
+        for app in r.apps where Notices.heavy(app, total: r.memory.total) { heavy[app.name] = heavyApps[app.name] ?? r.date }
+        heavyApps = heavy
     }
 
     private func sustained(_ since: Date?) -> Bool { Notices.sustained(since, now: Date()) }
