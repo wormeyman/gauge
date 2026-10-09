@@ -1,43 +1,18 @@
 import SwiftUI
 
 /// Settings section for the local API, the `gauge` command and its MCP server.
-struct LocalToolsSettings: View {
-    @AppStorage(LocalAPI.enabledKey) private var enabled = false
-    @State private var problem: String?
-
-    private var command: String { LocalAPI.commandPath }
-    private var claudeCode: String { "claude mcp add gauge -- \"\(command)\" mcp" }
-
-    var body: some View {
-        Section {
-            Toggle("Let local tools read Gauge", isOn: $enabled)
-            if let problem { Text(problem).foregroundStyle(Theme.signal) }
-            LabeledContent("Command") {
-                CopyableLine(text: command)
-            }
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Add to Claude Code")
-                CopyableLine(text: claudeCode)
-            }
-        } header: {
-            Text("Local tools")
-        } footer: {
-            Text("Lets the gauge command and coding agents on this Mac read vitals, top apps, dev servers, ports, notices and history. It's read-only: they can't stop servers or quit apps. Only your user account can connect, and nothing is opened to the network. Agents only see what's listed here, and the data stays on this Mac unless the agent sends it elsewhere.")
-                .foregroundStyle(.secondary)
-        }
-        .onChange(of: enabled) {
-            LocalAPI.shared.refresh()
-            problem = LocalAPI.shared.problem
-        }
-        .onAppear { problem = enabled ? LocalAPI.shared.problem : nil }
-    }
+/// Text shared by the Local tools settings pane (Settings.swift) and its snapshot.
+@MainActor
+enum LocalToolsSettings {
+    static var command: String { LocalAPI.commandPath }
+    static var claudeCode: String { "claude mcp add gauge -- \"\(command)\" mcp" }
+    static let explanation = "Lets the gauge command and coding agents on this Mac read vitals, top apps, dev servers, ports, notices and history. It's read-only: they can't stop servers or quit apps. Only your user account can connect, and nothing is opened to the network. Agents only see what's listed here, and the data stays on this Mac unless the agent sends it elsewhere."
 }
 
 extension LocalToolsSettings {
     /// The section's rows stacked plainly, for snapshots: ImageRenderer can't draw a grouped Form.
     static var snapshot: some View {
-        let settings = LocalToolsSettings()
-        return VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("Local tools").font(.system(size: 13, weight: .semibold))
             HStack {
                 Text("Let local tools read Gauge")
@@ -45,10 +20,10 @@ extension LocalToolsSettings {
                 Text("On").font(Theme.mono(11)).foregroundStyle(Theme.muted)
             }
             Hairline()
-            HStack { Text("Command"); Spacer(); Text(settings.command).font(Theme.mono(11)) }
+            HStack { Text("Command"); Spacer(); Text(command).font(Theme.mono(11)) }
             Hairline()
-            HStack { Text("Add to Claude Code"); Spacer(); Text(settings.claudeCode).font(Theme.mono(11)) }
-            Text("Lets the gauge command and coding agents on this Mac read vitals, top apps, dev servers, ports, notices and history. It's read-only: they can't stop servers or quit apps. Only your user account can connect, and nothing is opened to the network. Agents only see what's listed here, and the data stays on this Mac unless the agent sends it elsewhere.")
+            HStack { Text("Add to Claude Code"); Spacer(); Text(claudeCode).font(Theme.mono(11)) }
+            Text(explanation)
                 .font(.system(size: 12)).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
         }
         .font(.system(size: 13))

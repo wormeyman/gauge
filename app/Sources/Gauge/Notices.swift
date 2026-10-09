@@ -11,31 +11,45 @@ enum Notices {
         return now.timeIntervalSince(since) >= sustainSeconds
     }
 
+    /// Share of physical memory one app has to hold before it gets a notice of its own.
+    static let heavyShare = 0.25
+
+    static func heavy(_ app: AppUsage, total: Double) -> Bool {
+        app.name != "macOS" && total > 0 && app.memory / total >= heavyShare
+    }
+
     /// Less than 10% of the startup disk is free.
     static func diskLow(_ disk: DiskReading) -> Bool {
         disk.total > 0 && disk.available / disk.total < 0.1
     }
 
     static func build(reading r: Reading, now: Date, memoryWarningSince: Date?, busyApps: [String: Date],
-                      servers allServers: [DevServer], previous: [Notice]) -> [Notice] {
+                      heavyApps: [String: Date], servers allServers: [DevServer], previous: [Notice]) -> [Notice] {
         var list: [Notice] = []
         if let since = memoryWarningSince {
             let top = r.apps.filter { $0.name != "macOS" }.sorted { $0.memory > $1.memory }.prefix(2)
             let users = top.map { "\($0.name), \(Fmt.memoryText($0.memory))" }.joined(separator: ", and ")
             list.append(Notice(tag: "Memory", title: "Memory pressure is elevated",
                                body: users.isEmpty ? "macOS is compressing memory to keep up." : "The biggest users are \(users).",
-                               hot: true, since: since, target: "Memory"))
+                               hot: true, since: since, target: "Memory", alert: .memoryPressure))
         }
         for (name, since) in busyApps.sorted(by: { $0.key < $1.key }) where sustained(since, now: now) {
             let cpu = r.apps.first { $0.name == name }?.cpu ?? 0
             list.append(Notice(tag: "CPU", title: "\(name) is using a lot of CPU",
                                body: "\(Fmt.percent(cpu)) of one core for the last \(max(1, Int(now.timeIntervalSince(since) / 60))) min.",
-                               hot: true, since: since, target: "CPU"))
+                               hot: true, since: since, target: "CPU", alert: .busyApp))
+        }
+        for (name, since) in heavyApps.sorted(by: { $0.key < $1.key }) where sustained(since, now: now) {
+            let memory = r.apps.first { $0.name == name }?.memory ?? 0
+            let share = r.memory.total > 0 ? memory / r.memory.total * 100 : 0
+            list.append(Notice(tag: "Memory", title: "\(name) is using a lot of memory",
+                               body: "\(Fmt.memoryText(memory)), \(Fmt.percent(share)) of this Mac's memory, for the last \(max(1, Int(now.timeIntervalSince(since) / 60))) min.",
+                               hot: true, since: since, target: "Memory", alert: .heavyApp))
         }
         if diskLow(r.disk) {
             list.append(Notice(tag: "Disk", title: "Your startup disk is almost full",
                                body: "\(Fmt.storageText(r.disk.available)) free of \(Fmt.storageText(r.disk.total)).",
-                               hot: true, since: r.date, target: "Disk"))
+                               hot: true, since: previous.first { $0.tag == "Disk" }?.since ?? r.date, target: "Disk", alert: .diskLow))
         }
         let servers = allServers.filter(\.isDev)
         if !servers.isEmpty {

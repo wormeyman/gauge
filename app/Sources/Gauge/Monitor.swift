@@ -32,6 +32,8 @@ struct Notice: Identifiable, Equatable {
     var hot: Bool
     var since: Date
     var target: String
+    /// Set on notices that can be sent as macOS notifications.
+    var alert: AlertKind?
 }
 
 struct Slice: Identifiable, Equatable {
@@ -171,6 +173,9 @@ final class Monitor {
     @ObservationIgnored private var serverList: [DevServer] = []
     @ObservationIgnored private var memoryWarningSince: Date?
     @ObservationIgnored private var busyApps: [String: Date] = [:]
+    @ObservationIgnored private var heavyApps: [String: Date] = [:]
+    /// Notices rebuilt every tick, even while no window is visible, for notifications.
+    @ObservationIgnored private var alertNotices: [Notice] = []
     @ObservationIgnored private var cpuHighSince: Date?
     @ObservationIgnored private var gpuPeak = 0.0
     @ObservationIgnored private var selfSamples: [SelfUsage] = []
@@ -287,6 +292,9 @@ final class Monitor {
         selfSamples.append(r.selfUsage)
         if selfSamples.count > 15 { selfSamples.removeFirst(selfSamples.count - 15) }
         updateFlags(r, cpu: cpu)
+        alertNotices = Notices.build(reading: r, now: r.date, memoryWarningSince: memoryWarningSince, busyApps: busyApps,
+                                     heavyApps: heavyApps, servers: serverList, previous: alertNotices)
+        Notifier.shared.consider(alertNotices, now: r.date)
         persist(r)
         if ticks % 1800 == 0 { store.prune(keepingDays: Self.retentionDays) }
         recent.append(RecentSample(date: r.date, cpu: cpu, memory: r.memory.used, memoryTotal: r.memory.total,
@@ -307,7 +315,7 @@ final class Monitor {
         update(\.selfUsage, SelfUsage(cpu: selfSamples.map(\.cpu).reduce(0, +) / n, memory: r.selfUsage.memory))
         update(\.vitals, buildVitals(r, cpu: cpu))
         update(\.notices, Notices.build(reading: r, now: Date(), memoryWarningSince: memoryWarningSince, busyApps: busyApps,
-                                         servers: serverList, previous: notices)
+                                         heavyApps: heavyApps, servers: serverList, previous: notices)
                          + insights.notices(r, recent: recent, now: Date()))
         update(\.breakdowns, buildBreakdowns(r, cpu: cpu))
         update(\.hardware, buildHardware(r))
@@ -321,7 +329,7 @@ final class Monitor {
     func currentNotices(servers: [DevServer]) -> [Notice] {
         guard let latest else { return [] }
         return Notices.build(reading: latest, now: Date(), memoryWarningSince: memoryWarningSince, busyApps: busyApps,
-                             servers: servers, previous: notices).filter { !dismissed.contains($0.id) }
+                             heavyApps: heavyApps, servers: servers, previous: notices).filter { !dismissed.contains($0.id) }
     }
 
     private func persist(_ r: Reading) {
@@ -420,6 +428,9 @@ final class Monitor {
         var busy: [String: Date] = [:]
         for app in r.apps where app.cpu >= 90 && app.name != "macOS" { busy[app.name] = busyApps[app.name] ?? r.date }
         busyApps = busy
+        var heavy: [String: Date] = [:]
+        for app in r.apps where Notices.heavy(app, total: r.memory.total) { heavy[app.name] = heavyApps[app.name] ?? r.date }
+        heavyApps = heavy
     }
 
     private func sustained(_ since: Date?) -> Bool { Notices.sustained(since, now: Date()) }

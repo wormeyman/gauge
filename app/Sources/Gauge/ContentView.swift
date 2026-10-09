@@ -50,6 +50,12 @@ struct ContentView: View {
         .fileExporter(isPresented: $exporting, document: exportDocument,
                       contentType: .commaSeparatedText, defaultFilename: "Gauge history") { _ in exportDocument = nil }
         .onReceive(NotificationCenter.default.publisher(for: .gaugeExport)) { _ in export() }
+        // Pages asked for by the menu bar panel or a clicked notification.
+        .onChange(of: monitor.requestedPage, initial: true) { _, requested in
+            guard let requested else { return }
+            select(requested)
+            monitor.requestedPage = nil
+        }
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 HStack(spacing: 9) {
